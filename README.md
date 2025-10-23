@@ -37,7 +37,7 @@ An intelligent portfolio management system powered by agentic AI that provides a
 
 ### 1. Clone and Setup
 ```bash
-git clone <repository-url>
+git clone https://github.com/eshaanmathakari/agentic-ai-capstone.git
 cd agentic-ai-capstone
 
 # Copy environment file
