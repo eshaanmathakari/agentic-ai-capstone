@@ -187,24 +187,71 @@ def dashboard_page():
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Portfolio Performance")
+        st.subheader("Portfolio Allocation Analysis")
         if portfolios:
-            # Use first portfolio for performance chart
+            # Use first portfolio for allocation analysis
             primary_portfolio = portfolios[0]
             portfolio_id = primary_portfolio.get('id')
             
-            # Generate sample performance data (in production, fetch from backend)
-            dates = pd.date_range(start='2024-01-01', end='2024-01-31', freq='D')
-            base_value = primary_portfolio.get('total_value', 100000)
-            values = base_value + (dates.day * 1000) + (dates.day * 50 * np.random.randn(len(dates)))
+            # Get rebalancing suggestions for this portfolio
+            suggestions_response = api_client.get_rebalancing_suggestions(portfolio_id)
             
-            fig = px.line(
-                x=dates, 
-                y=values, 
-                title="Portfolio Value Over Time",
-                labels={'x': 'Date', 'y': 'Value ($)'}
-            )
-            st.plotly_chart(fig, use_container_width=True, key=f"dashboard_perf_{portfolio_id}")
+            if suggestions_response.get("success") and suggestions_response.get("data"):
+                suggestions = suggestions_response.get("data", [])
+                if suggestions:
+                    latest_suggestion = suggestions[0]  # Most recent suggestion
+                    
+                    # Get current vs recommended allocation
+                    current_allocation = latest_suggestion.get('current_allocation', {})
+                    suggested_allocation = latest_suggestion.get('suggested_allocation', {})
+                    
+                    if current_allocation and suggested_allocation:
+                        # Create comparison chart
+                        symbols = list(set(current_allocation.keys()) | set(suggested_allocation.keys()))
+                        current_values = [current_allocation.get(symbol, 0) for symbol in symbols]
+                        suggested_values = [suggested_allocation.get(symbol, 0) for symbol in symbols]
+                        
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            name='Current Allocation',
+                            x=symbols,
+                            y=current_values,
+                            marker_color='lightblue'
+                        ))
+                        fig.add_trace(go.Bar(
+                            name='Recommended Allocation',
+                            x=symbols,
+                            y=suggested_values,
+                            marker_color='darkblue'
+                        ))
+                        
+                        fig.update_layout(
+                            title="Current vs Recommended Allocation",
+                            xaxis_title="Assets",
+                            yaxis_title="Weight (%)",
+                            barmode='group'
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True, key=f"allocation_comparison_{portfolio_id}")
+                        
+                        # Show improvement metrics
+                        reasoning = latest_suggestion.get('reasoning', {})
+                        if reasoning:
+                            st.subheader("Expected Improvements")
+                            col_metric1, col_metric2, col_metric3 = st.columns(3)
+                            
+                            with col_metric1:
+                                st.metric("Risk Reduction", f"{reasoning.get('risk_reduction', 'N/A')}")
+                            with col_metric2:
+                                st.metric("Expected Return", f"{reasoning.get('expected_return', 'N/A')}")
+                            with col_metric3:
+                                st.metric("Sharpe Ratio", f"{reasoning.get('sharpe_ratio', 'N/A')}")
+                    else:
+                        st.info("No allocation data available for comparison.")
+                else:
+                    st.info("No rebalancing suggestions available. Generate recommendations in the Rebalancing tab.")
+            else:
+                st.info("No rebalancing suggestions available. Generate recommendations in the Rebalancing tab.")
         else:
             st.info("No portfolios available. Create one in the Portfolio tab.")
     

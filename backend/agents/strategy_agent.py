@@ -6,7 +6,8 @@ from .base_agent import BaseAgent
 from .tools import (
     portfolio_optimizer_tool,
     market_regime_detector_tool,
-    risk_calculator_tool
+    risk_calculator_tool,
+    suggest_diversification_assets_tool
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class StrategyAgent(BaseAgent):
             regime_analysis = market_regime_detector_tool(market_data)
             market_regime = regime_analysis.get("regime", "unknown")
             
-            # Calculate risk metrics - convert current_weights dict to holdings format
+            # Calculate risk metrics with enhanced user profile integration
             holdings_list = []
             for symbol, weight in current_weights.items():
                 holdings_list.append({
@@ -49,20 +50,29 @@ class StrategyAgent(BaseAgent):
                     "unrealized_gain_loss": 0  # Default for now
                 })
             
-            risk_metrics = risk_calculator_tool({
-                "holdings": holdings_list,
-                "market_data": market_data
-            })
+            # Enhanced risk calculation with user profile and market data
+            risk_metrics = risk_calculator_tool(
+                portfolio_data={"holdings": holdings_list},
+                user_risk_profile=risk_profile,
+                market_data=market_data
+            )
             
-            # Optimize portfolio - ensure risk_level is a string
+            # Optimize portfolio with MPT and market data
             risk_level = risk_profile.get("level", "moderate")
             if not isinstance(risk_level, str):
-                # Handle case where risk_level might be an enum or other type
                 risk_level = str(risk_level) if risk_level is not None else "moderate"
             
             optimization_results = portfolio_optimizer_tool(
-                current_weights, 
-                risk_level
+                current_weights=current_weights,
+                risk_level=risk_level,
+                market_data=market_data,
+                user_risk_profile=risk_profile
+            )
+            
+            # Get diversification suggestions
+            diversification_results = suggest_diversification_assets_tool(
+                current_portfolio=current_weights,
+                market_data=market_data
             )
             
             # Get target weights from optimization results (note: key is "weights" not "target_weights")
@@ -86,13 +96,22 @@ class StrategyAgent(BaseAgent):
                             "target_weight": target_weight
                         })
             
-            # Create structured recommendations object
+            # Create structured recommendations object with enhanced data
             recommendations = {
                 "target_weights": target_weights,
                 "actions": actions,
                 "market_regime": market_regime,
                 "risk_level": risk_level,
-                "market_analysis": regime_analysis
+                "market_analysis": regime_analysis,
+                "diversification_suggestions": diversification_results.get("suggested_assets", []),
+                "sector_analysis": diversification_results.get("current_sector_exposure", {}),
+                "optimization_analysis": optimization_results.get("openai_analysis", ""),
+                "diversification_analysis": diversification_results.get("openai_analysis", ""),
+                "expected_metrics": {
+                    "expected_return": optimization_results.get("expected_return", 0),
+                    "expected_volatility": optimization_results.get("expected_volatility", 0),
+                    "sharpe_ratio": optimization_results.get("sharpe_ratio", 0)
+                }
             }
             
             self.log_action("strategy_task_completed", {
