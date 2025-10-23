@@ -1,0 +1,122 @@
+# AWS Infrastructure Configuration for AI Portfolio Rebalancer
+# This file defines the AWS resources needed for deployment
+
+# ECS Cluster Configuration
+ECS:
+  cluster_name: "portfolio-cluster"
+  service_name: "portfolio-service"
+  task_definition: "portfolio-task"
+  desired_count: 2
+  launch_type: "FARGATE"
+  platform_version: "LATEST"
+
+# ECR Repository
+ECR:
+  repository_name: "portfolio-rebalancer"
+  image_tag: "latest"
+
+# VPC Configuration
+VPC:
+  cidr_block: "10.0.0.0/16"
+  availability_zones: ["us-east-1a", "us-east-1b"]
+  public_subnets:
+    - "10.0.1.0/24"
+    - "10.0.2.0/24"
+  private_subnets:
+    - "10.0.3.0/24"
+    - "10.0.4.0/24"
+
+# Application Load Balancer
+ALB:
+  name: "portfolio-alb"
+  scheme: "internet-facing"
+  type: "application"
+  listeners:
+    - port: 80
+      protocol: "HTTP"
+      default_action: "redirect_to_https"
+    - port: 443
+      protocol: "HTTPS"
+      ssl_certificate: "arn:aws:acm:us-east-1:ACCOUNT:certificate/CERT-ID"
+
+# RDS Database
+RDS:
+  engine: "postgres"
+  engine_version: "15.4"
+  instance_class: "db.t3.micro"
+  allocated_storage: 20
+  max_allocated_storage: 100
+  storage_encrypted: true
+  backup_retention_period: 7
+  multi_az: false  # Set to true for production
+
+# ElastiCache Redis
+ElastiCache:
+  engine: "redis"
+  node_type: "cache.t3.micro"
+  num_cache_nodes: 1
+  parameter_group: "default.redis7"
+
+# Environment Variables
+Environment:
+  - name: "DATABASE_URL"
+    value: "postgresql://username:password@rds-endpoint:5432/portfolio_agent"
+  - name: "REDIS_URL"
+    value: "redis://elasticache-endpoint:6379/0"
+  - name: "SECRET_KEY"
+    value: "your-production-secret-key"
+  - name: "OPENAI_API_KEY"
+    value: "your-openai-api-key"
+  - name: "DEBUG"
+    value: "False"
+
+# Security Groups
+SecurityGroups:
+  - name: "portfolio-alb-sg"
+    description: "Security group for Application Load Balancer"
+    ingress:
+      - from_port: 80
+        to_port: 80
+        protocol: "tcp"
+        cidr_blocks: ["0.0.0.0/0"]
+      - from_port: 443
+        to_port: 443
+        protocol: "tcp"
+        cidr_blocks: ["0.0.0.0/0"]
+  
+  - name: "portfolio-ecs-sg"
+    description: "Security group for ECS tasks"
+    ingress:
+      - from_port: 8000
+        to_port: 8000
+        protocol: "tcp"
+        source_security_group: "portfolio-alb-sg"
+      - from_port: 8501
+        to_port: 8501
+        protocol: "tcp"
+        source_security_group: "portfolio-alb-sg"
+
+# IAM Roles
+IAM:
+  - name: "portfolio-task-role"
+    description: "Task role for ECS tasks"
+    policies:
+      - "AmazonECSTaskExecutionRolePolicy"
+      - "CloudWatchLogsFullAccess"
+  
+  - name: "portfolio-execution-role"
+    description: "Execution role for ECS tasks"
+    policies:
+      - "AmazonECSTaskExecutionRolePolicy"
+
+# CloudWatch Logs
+Logs:
+  log_group: "/ecs/portfolio-rebalancer"
+  retention_days: 30
+
+# Auto Scaling
+AutoScaling:
+  min_capacity: 1
+  max_capacity: 10
+  target_cpu_utilization: 70
+  target_memory_utilization: 80
