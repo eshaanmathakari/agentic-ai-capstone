@@ -1,8 +1,10 @@
-"""Data Agent - Market Data Specialist"""
+"""Data Agent - Market Data Specialist
+Implements CrewAI Agent for data collection and processing"""
 
 from typing import Dict, Any, List
 import logging
 import pandas as pd
+from crewai import Agent, Task
 from .base_agent import BaseAgent
 from .tools import (
     fetch_market_data_tool,
@@ -10,6 +12,53 @@ from .tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# CrewAI Agent Definition
+def create_data_agent(llm=None) -> Agent:
+    """Create Data Agent using CrewAI framework"""
+    from .tools import (
+        FETCH_MARKET_DATA_CREW_TOOL,
+        CALCULATE_INDICATORS_CREW_TOOL,
+        fetch_market_data_tool,
+        calculate_indicators_tool,
+        crewai_llm
+    )
+
+    # Use crew LLM if available, otherwise use provided llm
+    if crewai_llm and llm is None:
+        llm = crewai_llm
+
+    # Use CrewAI Tool objects if available, otherwise use functions directly
+    tools_list = [FETCH_MARKET_DATA_CREW_TOOL, CALCULATE_INDICATORS_CREW_TOOL]
+    tools_list = [t for t in tools_list if t is not None]
+
+    # Fallback to functions if no Tool objects available
+    if not tools_list:
+        tools_list = [fetch_market_data_tool, calculate_indicators_tool]
+
+    return Agent(
+        role='Market Data Specialist',
+        goal='Gather and validate financial market data with precision and accuracy',
+        backstory="""You are a specialized Market Data Analyst with deep expertise in financial data collection and validation.
+
+        Your sole focus is gathering and validating financial market data. You excel at:
+        - Fetching real-time and historical market data from multiple sources
+        - Calculating technical indicators (RSI, MACD, moving averages, volatility)
+        - Validating data quality and identifying anomalies
+        - Processing large datasets efficiently and accurately
+
+        You are methodical, precise, and always ensure data integrity. Your analysis provides the foundation for all portfolio decisions.
+        - Market data validation and quality assurance
+        - Understanding of market correlations and sector rotations
+        - News sentiment analysis and market impact assessment
+
+        You always prioritize data accuracy, handle API rate limits gracefully, and provide comprehensive market intelligence that forms the foundation for sound investment decisions.""",
+        tools=tools_list,
+        llm=llm,
+        verbose=True,
+        allow_delegation=False
+    )
 
 
 class DataAgent(BaseAgent):

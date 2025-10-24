@@ -19,13 +19,13 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+/files
 # Virtual Environment
 venv/
 env/
 ENV/
 .venv
-
+/data
 # Environment variables
 .env
 .env.local
@@ -45,6 +45,7 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+/ml-training/.
 
 # Logs
 *.log

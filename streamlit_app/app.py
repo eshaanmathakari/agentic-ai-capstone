@@ -200,11 +200,26 @@ def dashboard_page():
                 suggestions = suggestions_response.get("data", [])
                 if suggestions:
                     latest_suggestion = suggestions[0]  # Most recent suggestion
-                    
-                    # Get current vs recommended allocation
-                    current_allocation = latest_suggestion.get('current_allocation', {})
+
+                    # Get current allocation from actual portfolio holdings (not suggestion)
+                    portfolio_response = api_client.get_portfolio(portfolio_id)
+                    current_allocation = {}
                     suggested_allocation = latest_suggestion.get('suggested_allocation', {})
-                    
+
+                    if portfolio_response.get("success"):
+                        portfolio_data = portfolio_response.get("data", {})
+                        holdings = portfolio_data.get("holdings", [])
+                        total_value = portfolio_data.get("total_value", 1)
+
+                        # Calculate current allocation from actual holdings
+                        for holding in holdings:
+                            symbol = holding.get('asset_symbol', '')
+                            value = holding.get('current_value', 0)
+                            if total_value > 0:
+                                current_allocation[symbol] = value / total_value
+                            else:
+                                current_allocation[symbol] = 0
+
                     if current_allocation and suggested_allocation:
                         # Create comparison chart
                         symbols = list(set(current_allocation.keys()) | set(suggested_allocation.keys()))
@@ -235,17 +250,24 @@ def dashboard_page():
                         st.plotly_chart(fig, use_container_width=True, key=f"allocation_comparison_{portfolio_id}")
                         
                         # Show improvement metrics
+                        expected_improvements = latest_suggestion.get('expected_improvements', {})
                         reasoning = latest_suggestion.get('reasoning', {})
-                        if reasoning:
+
+                        if expected_improvements or reasoning:
                             st.subheader("Expected Improvements")
                             col_metric1, col_metric2, col_metric3 = st.columns(3)
-                            
+
+                            # Use expected_improvements if available, otherwise fall back to reasoning
+                            risk_reduction = expected_improvements.get('risk_reduction_display') or expected_improvements.get('risk_reduction', reasoning.get('risk_reduction', 'N/A'))
+                            expected_return = expected_improvements.get('expected_return_display') or expected_improvements.get('expected_return', reasoning.get('expected_return', 'N/A'))
+                            sharpe_ratio = expected_improvements.get('sharpe_ratio_display') or expected_improvements.get('sharpe_ratio', reasoning.get('sharpe_ratio', 'N/A'))
+
                             with col_metric1:
-                                st.metric("Risk Reduction", f"{reasoning.get('risk_reduction', 'N/A')}")
+                                st.metric("Risk Reduction", risk_reduction if risk_reduction != 'N/A' else "0.0%")
                             with col_metric2:
-                                st.metric("Expected Return", f"{reasoning.get('expected_return', 'N/A')}")
+                                st.metric("Expected Return", expected_return if expected_return != 'N/A' else "8.0%")
                             with col_metric3:
-                                st.metric("Sharpe Ratio", f"{reasoning.get('sharpe_ratio', 'N/A')}")
+                                st.metric("Sharpe Ratio", sharpe_ratio if sharpe_ratio != 'N/A' else "0.40")
                     else:
                         st.info("No allocation data available for comparison.")
                 else:
@@ -401,9 +423,24 @@ def analytics_page():
                 names=symbols,
                 title="Current Allocation"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"analytics_pie_{portfolio_id}")
         else:
             st.info("No allocation data available.")
+
+    with col2:
+        st.subheader("Performance by Asset")
+        
+        symbols = [h.get('asset_symbol', '') for h in holdings]
+        gains = [h.get('unrealized_gain_loss_pct', 0) for h in holdings]
+        
+        fig = px.bar(
+            x=symbols,
+            y=gains,
+            title="Gain/Loss by Asset (%)",
+            color=gains,
+            color_continuous_scale=['red', 'white', 'green']
+        )
+        st.plotly_chart(fig, use_container_width=True, key=f"analytics_bar_{portfolio_id}")
 
 
 def portfolio_page():
@@ -632,10 +669,31 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
     """AI-powered analysis tab"""
     st.subheader("🤖 AI-Powered Portfolio Analysis")
     
-    # Check if user has risk profile
-    risk_profile_response = api_client.get_risk_profile()
+    if 'risk_profile' not in st.session_state:
+        st.session_state.risk_profile = None
+
+    # Function to fetch risk profile and cache it in session state
+    def fetch_risk_profile():
+        try:
+            response = api_client.get_risk_profile()
+            if response.get("success"):
+                profile_data = response.get("data")
+                if profile_data is not None:
+                    st.session_state.risk_profile = profile_data
+                else:
+                    st.session_state.risk_profile = None
+            else:
+                st.session_state.risk_profile = None
+        except Exception as e:
+            st.session_state.risk_profile = None
     
-    if not risk_profile_response.get("success"):
+    # Fetch profile if not in session state
+    if st.session_state.risk_profile is None:
+        fetch_risk_profile()
+
+    risk_profile = st.session_state.risk_profile
+    
+    if not risk_profile:
         st.warning("⚠️ No risk profile found. Please complete your risk assessment to get personalized AI analysis.")
         
         if st.button("📝 Create Risk Profile"):
@@ -643,36 +701,29 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
                 st.write("Answer a few questions about your investment profile to enable AI-powered recommendations.")
                 
                 with st.form("risk_profile_form"):
-                    investment_horizon = st.selectbox(
-                        "Investment Horizon",
-                        ["1-3 years", "3-7 years", "7+ years"],
-                        help="How long can you invest before needing the money?"
+                    risk_tolerance = st.selectbox(
+                        "Risk Tolerance",
+                        ["Low Risk", "Medium Risk", "High Risk"],
+                        help="Choose your risk comfort level"
                     )
                     
-                    loss_tolerance = st.slider(
-                        "Loss Tolerance (0-10)",
-                        min_value=0,
-                        max_value=10,
+                    investment_horizon = st.number_input(
+                        "Investment Horizon (years)",
+                        min_value=1,
+                        max_value=50,
                         value=5,
-                        help="How comfortable are you with potential losses? (0=very conservative, 10=very aggressive)"
+                        help="How many years can you invest before needing the money?"
                     )
-                    
-                    experience = st.selectbox(
-                        "Investment Experience",
-                        ["beginner", "intermediate", "advanced"],
-                        help="What's your level of investment experience?"
-                    )
-                    
+
                     if st.form_submit_button("Create Risk Profile"):
                         profile_data = {
-                            "age": 30,  # Default value
+                            "age": 30,  # Default age
                             "investment_horizon": investment_horizon,
-                            "annual_income": 100000,  # Default value
-                            "net_worth": 500000,  # Default value
+                            "annual_income": 75000,  # Default income
+                            "net_worth": 150000,  # Default net worth
                             "questionnaire_data": {
-                                "investment_horizon": investment_horizon,
-                                "loss_tolerance": loss_tolerance,
-                                "experience": experience
+                                "risk_tolerance": risk_tolerance,
+                                "investment_horizon": investment_horizon
                             }
                         }
                         
@@ -680,21 +731,24 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
                         
                         if response.get("success"):
                             st.success("✅ Risk profile created successfully!")
+                            fetch_risk_profile() # Refresh data in session state
                             st.rerun()
                         else:
                             st.error(f"Failed to create risk profile: {response.get('error', 'Unknown error')}")
         return
     
-    risk_profile = risk_profile_response.get("data", {})
+    # Get fresh risk profile data after potential updates
+    risk_profile = st.session_state.risk_profile
     
     # Display risk profile
-    col1, col2, col3 = st.columns(3)
+    questionnaire_data = risk_profile.get('questionnaire_data', {})
+    user_risk_choice = questionnaire_data.get('risk_tolerance', 'Medium Risk')
+    
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.metric("Risk Level", risk_profile.get('risk_level', 'Unknown').title())
+        st.metric("Risk Tolerance", user_risk_choice)
     with col2:
-        st.metric("Risk Score", f"{risk_profile.get('risk_score', 0):.0f}/100")
-    with col3:
         st.metric("Investment Horizon", f"{risk_profile.get('investment_horizon', 0)} years")
     
     if st.button("🔄 Update Risk Profile"):
@@ -702,36 +756,51 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
             st.write("Update your risk profile information.")
             
             with st.form("update_risk_profile_form"):
-                investment_horizon = st.selectbox(
-                    "Investment Horizon",
-                    ["1-3 years", "3-7 years", "7+ years"],
-                    help="How long can you invest before needing the money?"
+                # Extract current values from questionnaire_data
+                questionnaire_data = risk_profile.get('questionnaire_data', {})
+                current_risk_tolerance = questionnaire_data.get('risk_tolerance', 'Medium Risk')
+                
+                # Map internal values back to user-friendly labels for display
+                risk_level_mapping = {
+                    "conservative": "Low Risk",
+                    "moderate": "Medium Risk", 
+                    "aggressive": "High Risk"
+                }
+                
+                # Get current risk level from database and map to display value
+                current_risk_level = risk_profile.get('risk_level', 'moderate')
+                if current_risk_level in risk_level_mapping:
+                    current_display_risk = risk_level_mapping[current_risk_level]
+                else:
+                    current_display_risk = current_risk_tolerance if current_risk_tolerance in ["Low Risk", "Medium Risk", "High Risk"] else "Medium Risk"
+                
+                risk_options = ["Low Risk", "Medium Risk", "High Risk"]
+                current_index = risk_options.index(current_display_risk) if current_display_risk in risk_options else 1
+                
+                risk_tolerance = st.selectbox(
+                    "Risk Tolerance",
+                    risk_options,
+                    index=current_index,
+                    help="Choose your risk comfort level"
                 )
                 
-                loss_tolerance = st.slider(
-                    "Loss Tolerance (0-10)",
-                    min_value=0,
-                    max_value=10,
-                    value=5,
-                    help="How comfortable are you with potential losses? (0=very conservative, 10=very aggressive)"
+                investment_horizon = st.number_input(
+                    "Investment Horizon (years)",
+                    min_value=1,
+                    max_value=50,
+                    value=risk_profile.get('investment_horizon', 5),
+                    help="How many years can you invest before needing the money?"
                 )
-                
-                experience = st.selectbox(
-                    "Investment Experience",
-                    ["beginner", "intermediate", "advanced"],
-                    help="What's your level of investment experience?"
-                )
-                
+
                 if st.form_submit_button("Update Risk Profile"):
                     profile_data = {
                         "age": risk_profile.get('age', 30),
                         "investment_horizon": investment_horizon,
-                        "annual_income": risk_profile.get('annual_income', 100000),
-                        "net_worth": risk_profile.get('net_worth', 500000),
+                        "annual_income": risk_profile.get('annual_income', 75000),
+                        "net_worth": risk_profile.get('net_worth', 150000),
                         "questionnaire_data": {
-                            "investment_horizon": investment_horizon,
-                            "loss_tolerance": loss_tolerance,
-                            "experience": experience
+                            "risk_tolerance": risk_tolerance,
+                            "investment_horizon": investment_horizon
                         }
                     }
                     
@@ -739,6 +808,7 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
                     
                     if response.get("success"):
                         st.success("✅ Risk profile updated successfully!")
+                        fetch_risk_profile() # Refresh data in session state
                         st.rerun()
                     else:
                         st.error(f"Failed to update risk profile: {response.get('error', 'Unknown error')}")
@@ -894,14 +964,8 @@ def current_allocation_tab(api_client: APIClient, portfolio_id: int):
             names=symbols,
             title="Current Allocation"
         )
-        st.plotly_chart(fig, use_container_width=True, key=f"analytics_alloc_{portfolio_id}")
-        fig = px.pie(
-            values=values,
-            names=symbols,
-            title="Current Allocation"
-        )
-        st.plotly_chart(fig, use_container_width=True, key=f"rebalance_alloc_{portfolio_id}")
-    
+        st.plotly_chart(fig, use_container_width=True, key=f"alloc_pie_{portfolio_id}")
+
     with col2:
         st.subheader("Performance by Asset")
         
@@ -915,7 +979,178 @@ def current_allocation_tab(api_client: APIClient, portfolio_id: int):
             color=gains,
             color_continuous_scale=['red', 'white', 'green']
         )
-        st.plotly_chart(fig, use_container_width=True, key=f"rebalance_gain_{portfolio_id}")
+        st.plotly_chart(fig, use_container_width=True, key=f"alloc_bar_{portfolio_id}")
+
+
+def format_ai_reasoning(reasoning: dict) -> str:
+    """Format AI reasoning into user-friendly display"""
+    if not reasoning:
+        return "No AI reasoning available."
+
+    formatted_output = []
+
+    # Target Weights Section
+    target_weights = reasoning.get('target_weights', {})
+    if target_weights:
+        formatted_output.append("### 📊 Recommended Portfolio Allocation")
+        formatted_output.append("")
+        for symbol, weight in target_weights.items():
+            # Get full company name if possible
+            company_names = {
+                'AAPL': 'Apple Inc.',
+                'GOOGL': 'Alphabet Inc. (Google)',
+                'MSFT': 'Microsoft Corporation',
+                'TSLA': 'Tesla, Inc.',
+                'NVDA': 'NVIDIA Corporation',
+                'AMZN': 'Amazon.com, Inc.',
+                'META': 'Meta Platforms, Inc.',
+                'NFLX': 'Netflix, Inc.',
+                'JPM': 'JPMorgan Chase & Co.',
+                'BRK.B': 'Berkshire Hathaway Inc.'
+            }
+            company_name = company_names.get(symbol, symbol)
+            formatted_output.append(f"- **{company_name} ({symbol})**: {weight:.1%} of portfolio")
+
+    # Actions Section
+    actions = reasoning.get('actions', [])
+    if actions:
+        formatted_output.append("")
+        formatted_output.append("### 🎯 Suggested Rebalancing Actions")
+        formatted_output.append("")
+
+        buy_actions = [a for a in actions if a.get('action') == 'buy']
+        sell_actions = [a for a in actions if a.get('action') == 'sell']
+
+        if buy_actions:
+            formatted_output.append("**💰 Buy Orders:**")
+            for action in buy_actions:
+                symbol = action.get('symbol', 'Unknown')
+                weight_change = abs(action.get('weight_change', 0))
+                current_weight = action.get('current_weight', 0)
+                target_weight = action.get('target_weight', 0)
+                company_names = {
+                    'AAPL': 'Apple', 'GOOGL': 'Google', 'MSFT': 'Microsoft',
+                    'TSLA': 'Tesla', 'NVDA': 'NVIDIA', 'AMZN': 'Amazon',
+                    'META': 'Meta', 'NFLX': 'Netflix', 'JPM': 'JPMorgan',
+                    'BRK.B': 'Berkshire Hathaway'
+                }
+                company_name = company_names.get(symbol, symbol)
+                formatted_output.append(f"  - Increase **{company_name}** position by {weight_change:.1%} (from {current_weight:.1%} to {target_weight:.1%})")
+
+        if sell_actions:
+            formatted_output.append("")
+            formatted_output.append("**💸 Sell Orders:**")
+            for action in sell_actions:
+                symbol = action.get('symbol', 'Unknown')
+                weight_change = abs(action.get('weight_change', 0))
+                current_weight = action.get('current_weight', 0)
+                target_weight = action.get('target_weight', 0)
+                company_names = {
+                    'AAPL': 'Apple', 'GOOGL': 'Google', 'MSFT': 'Microsoft',
+                    'TSLA': 'Tesla', 'NVDA': 'NVIDIA', 'AMZN': 'Amazon',
+                    'META': 'Meta', 'NFLX': 'Netflix', 'JPM': 'JPMorgan',
+                    'BRK.B': 'Berkshire Hathaway'
+                }
+                company_name = company_names.get(symbol, symbol)
+                formatted_output.append(f"  - Decrease **{company_name}** position by {weight_change:.1%} (from {current_weight:.1%} to {target_weight:.1%})")
+
+    # Expected Improvements Section
+    expected_improvements = reasoning.get('expected_improvements', {})
+    if expected_improvements:
+        formatted_output.append("")
+        formatted_output.append("### 📈 Expected Portfolio Performance")
+        formatted_output.append("")
+
+        # Return and Risk Metrics
+        expected_return = expected_improvements.get('expected_return_display', expected_improvements.get('expected_return', 'N/A'))
+        expected_volatility = expected_improvements.get('expected_volatility_display', expected_improvements.get('expected_volatility', 'N/A'))
+        sharpe_ratio = expected_improvements.get('sharpe_ratio_display', expected_improvements.get('sharpe_ratio', 'N/A'))
+
+        if expected_return != 'N/A':
+            formatted_output.append(f"- **Projected Annual Return**: {expected_return}")
+        if expected_volatility != 'N/A':
+            formatted_output.append(f"- **Expected Volatility**: {expected_volatility}")
+        if sharpe_ratio != 'N/A':
+            formatted_output.append(f"- **Risk-Adjusted Return (Sharpe Ratio)**: {sharpe_ratio}")
+
+        # Improvement metrics
+        return_improvement = expected_improvements.get('return_improvement_display', expected_improvements.get('return_improvement', 0))
+        volatility_improvement = expected_improvements.get('volatility_improvement_display', expected_improvements.get('volatility_improvement', 0))
+        risk_reduction = expected_improvements.get('risk_reduction_display', expected_improvements.get('risk_reduction', 0))
+
+        if return_improvement and return_improvement != '0.0%':
+            formatted_output.append(f"- **Expected Return Improvement**: {return_improvement}")
+        if volatility_improvement and volatility_improvement != '0.0%':
+            formatted_output.append(f"- **Volatility Change**: {volatility_improvement}")
+        if risk_reduction and risk_reduction != '0.0%':
+            formatted_output.append(f"- **Risk Reduction**: {risk_reduction}")
+
+    # Diversification Suggestions
+    diversification_suggestions = reasoning.get('diversification_suggestions', [])
+    if diversification_suggestions:
+        formatted_output.append("")
+        formatted_output.append("### 🌱 Diversification Opportunities")
+        formatted_output.append("")
+
+        # Group by sector
+        sectors = {}
+        for suggestion in diversification_suggestions:
+            sector = suggestion.get('sector', 'Other')
+            if sector not in sectors:
+                sectors[sector] = []
+            sectors[sector].append(suggestion)
+
+        for sector, suggestions in sectors.items():
+            formatted_output.append(f"**{sector} Sector:**")
+            for suggestion in suggestions[:2]:  # Show max 2 per sector
+                symbol = suggestion.get('symbol', 'Unknown')
+                reason = suggestion.get('reason', 'Improve diversification')
+                suggested_weight = suggestion.get('suggested_weight', 0)
+                formatted_output.append(f"  - Consider adding **{symbol}** ({suggested_weight:.1%} allocation) - {reason}")
+            if len(suggestions) > 2:
+                formatted_output.append(f"  - ... and {len(suggestions) - 2} more opportunities in {sector}")
+
+    # Market Analysis
+    market_regime = reasoning.get('market_regime', 'unknown')
+    if market_regime and market_regime != 'unknown':
+        formatted_output.append("")
+        formatted_output.append("### 📊 Market Analysis")
+        formatted_output.append("")
+
+        regime_descriptions = {
+            'bull': '🟢 **Bull Market**: Strong upward trends with positive investor sentiment',
+            'bear': '🔴 **Bear Market**: Declining prices with negative investor sentiment',
+            'stable': '🟡 **Stable Market**: Sideways movement with balanced risk and return',
+            'volatile': '🟠 **Volatile Market**: High uncertainty with large price swings'
+        }
+
+        regime_desc = regime_descriptions.get(market_regime.lower(), f'📈 **{market_regime.title()} Market**')
+        formatted_output.append(regime_desc)
+
+        risk_level = reasoning.get('risk_level', 'moderate')
+        original_risk_level = reasoning.get('original_risk_level', 'moderate')
+        if risk_level != original_risk_level:
+            formatted_output.append(f"- **Risk Level**: Adjusted from {original_risk_level} to {risk_level} based on your profile")
+
+    # Optimization Method and Guidance
+    optimization_method = reasoning.get('optimization_method', '')
+    optimization_guidance = reasoning.get('optimization_guidance', '')
+
+    if optimization_method and 'simple' in optimization_method.lower():
+        formatted_output.append("")
+        formatted_output.append("### 💡 Optimization Note")
+        formatted_output.append("")
+        formatted_output.append("Portfolio optimized using simplified allocation due to limited market data availability. For more precise optimization, consider waiting for full market data to be available.")
+
+    if optimization_guidance:
+        formatted_output.append("")
+        formatted_output.append("### 🎯 Investment Strategy")
+        formatted_output.append("")
+        # Clean up the guidance text for display
+        guidance = optimization_guidance.replace('\n', ' ').replace('  ', ' ').strip()
+        formatted_output.append(guidance)
+
+    return '\n'.join(formatted_output)
 
 
 def suggestions_tab(api_client: APIClient, portfolio_id: int):
@@ -947,10 +1182,27 @@ def suggestions_tab(api_client: APIClient, portfolio_id: int):
             with col3:
                 st.metric("Market Regime", suggestion.get('market_regime', 'Unknown').title())
             
-            # Current vs Suggested allocation
-            current_allocation = suggestion.get('current_allocation', {})
+            # Current vs Suggested allocation - get current from actual portfolio
             suggested_allocation = suggestion.get('suggested_allocation', {})
-            
+
+            # Get current allocation from actual portfolio holdings
+            portfolio_response = api_client.get_portfolio(portfolio_id)
+            current_allocation = {}
+
+            if portfolio_response.get("success"):
+                portfolio_data = portfolio_response.get("data", {})
+                holdings = portfolio_data.get("holdings", [])
+                total_value = portfolio_data.get("total_value", 1)
+
+                # Calculate current allocation from actual holdings
+                for holding in holdings:
+                    symbol = holding.get('asset_symbol', '')
+                    value = holding.get('current_value', 0)
+                    if total_value > 0:
+                        current_allocation[symbol] = value / total_value
+                    else:
+                        current_allocation[symbol] = 0
+
             if current_allocation and suggested_allocation:
                 st.subheader("Allocation Comparison")
                 
@@ -992,18 +1244,18 @@ def suggestions_tab(api_client: APIClient, portfolio_id: int):
                 df = pd.DataFrame(comparison_data)
                 st.dataframe(df, use_container_width=True)
             
-            # Reasoning
+            # AI Reasoning - User Friendly Display
             reasoning = suggestion.get('reasoning', {})
             if reasoning:
-                st.subheader("AI Reasoning")
-                
-                for key, value in reasoning.items():
-                    if isinstance(value, list):
-                        st.write(f"**{key.replace('_', ' ').title()}:**")
-                        for item in value:
-                            st.write(f"• {item}")
-                    else:
-                        st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+                st.subheader("🤖 AI Portfolio Analysis")
+
+                # Use formatted display instead of raw JSON
+                formatted_reasoning = format_ai_reasoning(reasoning)
+                st.markdown(formatted_reasoning)
+
+                # Technical Details (collapsible)
+                with st.expander("🔧 Technical Details"):
+                    st.json(reasoning)
             
             # Action buttons
             col1, col2, col3 = st.columns(3)

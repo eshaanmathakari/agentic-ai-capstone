@@ -1,11 +1,42 @@
-"""Validation Agent - Portfolio Compliance Officer"""
+"""Validation Agent - Portfolio Compliance Officer
+Implements CrewAI Agent for intelligent validation"""
 
 from typing import Dict, Any, List
 import logging
 from sqlalchemy.orm import Session
+from crewai import Agent, Task
 from .base_agent import BaseAgent
+from .tools import call_openai_for_analysis
 
 logger = logging.getLogger(__name__)
+
+
+# CrewAI Agent Definition
+def create_validation_agent(llm=None) -> Agent:
+    """Create Validation Agent using CrewAI framework"""
+    from .tools import crewai_llm
+
+    # Use crew LLM if available, otherwise use provided llm
+    if crewai_llm and llm is None:
+        llm = crewai_llm
+
+    return Agent(
+        role='Risk & Compliance Officer',
+        goal='Validate portfolio recommendations against constraints and risk parameters',
+        backstory="""You are a Risk & Compliance Officer with expertise in portfolio validation and risk assessment.
+
+        Your role is to validate portfolio recommendations against constraints. You excel at:
+        - Validating portfolio recommendations against risk constraints and limits
+        - Ensuring diversification requirements and concentration limits are met
+        - Assessing suitability of recommendations based on investor risk profiles
+        - Performing stress testing and scenario analysis on proposed allocations
+        - Verifying mathematical accuracy of optimization calculations
+
+        You are thorough, methodical, and always ensure recommendations meet regulatory and risk standards.""",
+        llm=llm,
+        verbose=True,
+        allow_delegation=False
+    )
 
 
 class ValidationAgent(BaseAgent):
@@ -61,6 +92,27 @@ class ValidationAgent(BaseAgent):
                 constraints
             )
             
+            # LLM-powered intelligent validation
+            validation_context = f"""
+            Portfolio Validation Analysis:
+            - Portfolio ID: {portfolio_id}
+            - Target weights: {target_weights}
+            - Allocation validation: {allocation_validation}
+            - Transaction costs: {transaction_costs}
+            - Constraints: {constraints}
+            - Recommendations: {recommendations}
+            
+            As a compliance officer, analyze these recommendations for:
+            1. Regulatory compliance (concentration limits, sector exposure)
+            2. Risk management (volatility, correlation risks)
+            3. Practical feasibility (transaction costs, market liquidity)
+            4. User suitability (alignment with risk profile)
+            
+            Provide specific validation insights and any warnings or concerns.
+            """
+            
+            llm_validation = call_openai_for_analysis(validation_context, "risk")
+            
             self.log_action("validation_task_completed", {
                 "portfolio_id": portfolio_id,
                 "recommendations_validated": len(recommendations.get("actions", [])),
@@ -75,6 +127,7 @@ class ValidationAgent(BaseAgent):
                 "allocation_validation": allocation_validation,
                 "transaction_costs": transaction_costs,
                 "constraints_validation": constraints_validation,
+                "llm_validation": llm_validation.get("analysis", "Validation analysis not available"),
                 "recommendations_validated": len(recommendations.get("actions", []))
             }
             

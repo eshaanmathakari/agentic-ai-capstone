@@ -1,7 +1,11 @@
-"""Strategy Agent - Portfolio Strategy Advisor"""
+"""Strategy Agent - Portfolio Strategy Advisor
+Implements CrewAI Agent for intelligent strategy generation"""
 
 from typing import Dict, Any, List
 import logging
+import pandas as pd
+import numpy as np
+from crewai import Agent, Task
 from .base_agent import BaseAgent
 from .tools import (
     portfolio_optimizer_tool,
@@ -11,6 +15,60 @@ from .tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# CrewAI Agent Definition
+def create_strategy_agent(llm=None) -> Agent:
+    """Create Strategy Agent using CrewAI framework"""
+    from .tools import (
+        PORTFOLIO_OPTIMIZER_CREW_TOOL,
+        MARKET_REGIME_DETECTOR_CREW_TOOL,
+        portfolio_optimizer_tool,
+        market_regime_detector_tool,
+        crewai_llm
+    )
+
+    # Use crew LLM if available, otherwise use provided llm
+    if crewai_llm and llm is None:
+        llm = crewai_llm
+
+    # Use CrewAI Tool objects if available, otherwise use functions directly
+    tools_list = [PORTFOLIO_OPTIMIZER_CREW_TOOL, MARKET_REGIME_DETECTOR_CREW_TOOL]
+    tools_list = [t for t in tools_list if t is not None]
+
+    # Fallback to functions if no Tool objects available
+    if not tools_list:
+        tools_list = [portfolio_optimizer_tool, market_regime_detector_tool]
+
+    return Agent(
+        role='Chief Portfolio Strategist',
+        goal='Develop optimal asset allocation strategies using advanced portfolio optimization techniques',
+        backstory="""You are a Chief Portfolio Strategist with deep expertise in portfolio optimization and asset allocation strategy.
+
+        Your expertise is portfolio optimization and asset allocation strategy. You excel at:
+        - Modern Portfolio Theory (MPT) and mean-variance optimization
+        - Risk-adjusted return maximization and volatility minimization
+        - Market regime detection and adaptive strategy adjustments
+        - Multi-asset class allocation and correlation analysis
+
+        You are strategic, analytical, and always optimize for the best risk-adjusted returns within given constraints.
+        - Creating optimized portfolios that balance risk and return using advanced quantitative methods
+        - Tailoring strategies to individual investor profiles, considering age, risk tolerance, and investment horizon
+        - Applying behavioral finance principles to improve long-term outcomes
+
+        Your recommendations are always grounded in sound financial principles:
+        - You prioritize diversification across asset classes and sectors
+        - You consider transaction costs and tax implications
+        - You provide clear rationale for each recommendation
+        - You adapt strategies based on changing market conditions
+        - You focus on risk-adjusted returns rather than absolute performance
+
+        You have a proven track record of helping clients achieve their financial goals while managing downside risk effectively.""",
+        tools=tools_list,
+        llm=llm,
+        verbose=True,
+        allow_delegation=False
+    )
 
 
 class StrategyAgent(BaseAgent):
@@ -96,21 +154,161 @@ class StrategyAgent(BaseAgent):
                             "target_weight": target_weight
                         })
             
+            # Calculate expected improvements based on current vs target allocation
+            expected_improvements = {}
+            if current_weights and target_weights:
+                try:
+                    # Calculate portfolio metrics for current allocation
+                    current_total = sum(current_weights.values())
+                    if current_total > 0:
+                        current_normalized = {k: v/current_total for k, v in current_weights.items()}
+                    else:
+                        current_normalized = current_weights
+
+                    # Get market data for expected return calculations
+                    market_data = task_input.get("market_data", {})
+                    if market_data:
+                        # Calculate expected returns based on historical data
+                        portfolio_returns = []
+                        portfolio_volatility = 0
+
+                        for symbol, weight in target_weights.items():
+                            if symbol in market_data and 'historical_data' in market_data[symbol]:
+                                hist_data = market_data[symbol]['historical_data']
+                                if hist_data:
+                                    df = pd.DataFrame(hist_data)
+                                    if 'Close' in df.columns:
+                                        returns = df['Close'].pct_change().dropna()
+                                        if not returns.empty:
+                                            expected_return = returns.mean() * 252  # Annualized
+                                            expected_vol = returns.std() * np.sqrt(252)  # Annualized
+
+                                            portfolio_returns.append(expected_return * weight)
+                                            portfolio_volatility += (expected_vol ** 2) * (weight ** 2)
+
+                                            # Add cross-asset correlations for diversification effect
+                                            for other_symbol, other_weight in target_weights.items():
+                                                if symbol != other_symbol and other_symbol in market_data:
+                                                    # Simplified correlation impact
+                                                    correlation = 0.3  # Assume moderate correlation
+                                                    portfolio_volatility += 2 * weight * other_weight * expected_vol * correlation * (returns.std() * np.sqrt(252) if other_symbol in market_data and 'historical_data' in market_data[other_symbol] else expected_vol)
+
+                        if portfolio_returns:
+                            expected_portfolio_return = sum(portfolio_returns)
+                            expected_portfolio_volatility = np.sqrt(portfolio_volatility)
+
+                            # Calculate Sharpe ratio (assuming 2% risk-free rate)
+                            risk_free_rate = 0.02
+                            sharpe_ratio = (expected_portfolio_return - risk_free_rate) / expected_portfolio_volatility if expected_portfolio_volatility > 0 else 0
+
+                            # Estimate current portfolio metrics for comparison
+                            current_portfolio_return = sum(returns.mean() * 252 * current_normalized.get(symbol, 0)
+                                                         for symbol in current_normalized
+                                                         if symbol in market_data and 'historical_data' in market_data.get(symbol, {}))
+
+                            current_portfolio_volatility = 0
+                            for symbol, weight in current_normalized.items():
+                                if symbol in market_data and 'historical_data' in market_data[symbol]:
+                                    returns = pd.DataFrame(market_data[symbol]['historical_data'])['Close'].pct_change().dropna()
+                                    if not returns.empty:
+                                        vol = returns.std() * np.sqrt(252)
+                                        current_portfolio_volatility += (vol ** 2) * (weight ** 2)
+
+                            current_portfolio_volatility = np.sqrt(current_portfolio_volatility)
+
+                            # Calculate improvements
+                            return_improvement = expected_portfolio_return - current_portfolio_return
+                            volatility_improvement = current_portfolio_volatility - expected_portfolio_volatility
+                            sharpe_improvement = sharpe_ratio - (current_portfolio_return - risk_free_rate) / current_portfolio_volatility if current_portfolio_volatility > 0 else sharpe_ratio
+
+                            expected_improvements = {
+                                "expected_return": expected_portfolio_return,
+                                "expected_volatility": expected_portfolio_volatility,
+                                "sharpe_ratio": sharpe_ratio,
+                                "return_improvement": return_improvement,
+                                "volatility_improvement": volatility_improvement,
+                                "sharpe_improvement": sharpe_improvement,
+                                "risk_reduction": abs(volatility_improvement) if volatility_improvement < 0 else 0,
+                                "expected_return_display": f"{expected_portfolio_return:.1%}",
+                                "expected_volatility_display": f"{expected_portfolio_volatility:.1%}",
+                                "sharpe_ratio_display": f"{sharpe_ratio:.2f}",
+                                "return_improvement_display": f"{return_improvement:+.1%}",
+                                "volatility_improvement_display": f"{volatility_improvement:+.1%}",
+                                "sharpe_improvement_display": f"{sharpe_improvement:+.2f}"
+                            }
+                        else:
+                            # Fallback when no market data available
+                            expected_improvements = {
+                                "expected_return": 0.08,  # 8% default
+                                "expected_volatility": 0.15,  # 15% default
+                                "sharpe_ratio": 0.4,  # Default Sharpe
+                                "return_improvement": 0.0,
+                                "volatility_improvement": 0.0,
+                                "sharpe_improvement": 0.0,
+                                "risk_reduction": 0.0,
+                                "expected_return_display": "8.0%",
+                                "expected_volatility_display": "15.0%",
+                                "sharpe_ratio_display": "0.40",
+                                "return_improvement_display": "0.0%",
+                                "volatility_improvement_display": "0.0%",
+                                "sharpe_improvement_display": "0.00"
+                            }
+                    else:
+                        # No market data fallback
+                        expected_improvements = {
+                            "expected_return": 0.08,
+                            "expected_volatility": 0.15,
+                            "sharpe_ratio": 0.4,
+                            "return_improvement": 0.0,
+                            "volatility_improvement": 0.0,
+                            "sharpe_improvement": 0.0,
+                            "risk_reduction": 0.0,
+                            "expected_return_display": "8.0%",
+                            "expected_volatility_display": "15.0%",
+                            "sharpe_ratio_display": "0.40",
+                            "return_improvement_display": "0.0%",
+                            "volatility_improvement_display": "0.0%",
+                            "sharpe_improvement_display": "0.00"
+                        }
+                except Exception as e:
+                    logging.warning(f"Error calculating expected improvements: {e}")
+                    expected_improvements = {
+                        "expected_return": 0.08,
+                        "expected_volatility": 0.15,
+                        "sharpe_ratio": 0.4,
+                        "return_improvement": 0.0,
+                        "volatility_improvement": 0.0,
+                        "sharpe_improvement": 0.0,
+                        "risk_reduction": 0.0,
+                        "expected_return_display": "8.0%",
+                        "expected_volatility_display": "15.0%",
+                        "sharpe_ratio_display": "0.40",
+                        "return_improvement_display": "0.0%",
+                        "volatility_improvement_display": "0.0%",
+                        "sharpe_improvement_display": "0.00"
+                    }
+
             # Create structured recommendations object with enhanced data
             recommendations = {
                 "target_weights": target_weights,
                 "actions": actions,
                 "market_regime": market_regime,
-                "risk_level": risk_level,
+                "risk_level": optimization_results.get("risk_level", risk_level),
+                "original_risk_level": optimization_results.get("original_risk_level", risk_level),
                 "market_analysis": regime_analysis,
                 "diversification_suggestions": diversification_results.get("suggested_assets", []),
                 "sector_analysis": diversification_results.get("current_sector_exposure", {}),
-                "optimization_analysis": optimization_results.get("openai_analysis", ""),
+                "optimization_method": optimization_results.get("optimization_method", "unknown"),
+                "risk_profile_analysis": optimization_results.get("risk_profile_analysis", {}),
+                "market_data_available": optimization_results.get("market_data_available", False),
+                "llm_reasoning": optimization_results.get("llm_reasoning", "Strategy reasoning not available"),
                 "diversification_analysis": diversification_results.get("openai_analysis", ""),
+                "optimization_guidance": optimization_results.get("optimization_guidance", ""),
+                "expected_improvements": expected_improvements,
                 "expected_metrics": {
-                    "expected_return": optimization_results.get("expected_return", 0),
-                    "expected_volatility": optimization_results.get("expected_volatility", 0),
-                    "sharpe_ratio": optimization_results.get("sharpe_ratio", 0)
+                    "expected_return": expected_improvements.get("expected_return", 0),
+                    "expected_volatility": expected_improvements.get("expected_volatility", 0),
+                    "sharpe_ratio": expected_improvements.get("sharpe_ratio", 0)
                 }
             }
             

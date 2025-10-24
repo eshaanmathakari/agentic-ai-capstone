@@ -42,41 +42,22 @@ class RiskProfileResponse(BaseModel):
 
 def calculate_risk_score(profile_data: RiskProfileCreate) -> tuple[float, RiskLevel]:
     """
-    Calculate risk score based on simplified 3-question questionnaire
-    Returns (score, risk_level)
+    Map user's risk choice directly to risk level.
+    Returns (score, risk_level) - score is just for database compatibility
     """
     questionnaire = profile_data.questionnaire_data or {}
-    score = 0.0
     
-    # Question 1: Investment horizon (0-40 points)
-    horizon = questionnaire.get('investment_horizon', '3-7')
-    if horizon == '7+':
-        score += 40
-    elif horizon == '3-7':
-        score += 25
-    else:  # 1-3
-        score += 10
+    # Get user's risk choice
+    risk_tolerance = questionnaire.get('risk_tolerance', 'Medium Risk')
     
-    # Question 2: Loss tolerance (0-40 points)
-    loss_tolerance = questionnaire.get('loss_tolerance', 5)
-    score += loss_tolerance * 4  # Scale 0-10 to 0-40
+    # Map to risk level and assign a simple score for database storage
+    risk_mapping = {
+        'High Risk': (RiskLevel.AGGRESSIVE, 80.0),
+        'Medium Risk': (RiskLevel.MODERATE, 50.0),
+        'Low Risk': (RiskLevel.CONSERVATIVE, 20.0)
+    }
     
-    # Question 3: Investment experience (0-20 points)
-    experience = questionnaire.get('experience', 'intermediate')
-    if experience == 'advanced':
-        score += 20
-    elif experience == 'intermediate':
-        score += 12
-    else:  # beginner
-        score += 6
-    
-    # Determine risk level
-    if score >= 80:
-        risk_level = RiskLevel.AGGRESSIVE
-    elif score >= 50:
-        risk_level = RiskLevel.MODERATE
-    else:
-        risk_level = RiskLevel.CONSERVATIVE
+    risk_level, score = risk_mapping.get(risk_tolerance, (RiskLevel.MODERATE, 50.0))
     
     return score, risk_level
 
@@ -133,7 +114,7 @@ async def create_risk_profile(
         return new_profile
 
 
-@router.get("/", response_model=RiskProfileResponse)
+@router.get("/", response_model=Optional[RiskProfileResponse])
 async def get_risk_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -144,51 +125,41 @@ async def get_risk_profile(
     ).first()
     
     if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Risk profile not found. Please complete the questionnaire."
-        )
+        return None  # Return None instead of 404 error
     
     return profile
 
 
 @router.get("/questionnaire")
 async def get_questionnaire():
-    """Get simplified 3-question risk assessment questionnaire"""
+    """Get simplified 2-question risk assessment questionnaire"""
     return {
         "questions": [
             {
+                "id": "risk_tolerance",
+                "question": "What is your risk tolerance?",
+                "type": "select",
+                "options": [
+                    {"value": "Low Risk", "label": "Low Risk"},
+                    {"value": "Medium Risk", "label": "Medium Risk"},
+                    {"value": "High Risk", "label": "High Risk"}
+                ],
+                "default": "Medium Risk",
+                "help": "Choose your risk comfort level",
+                "required": True
+            },
+            {
                 "id": "investment_horizon",
                 "question": "What is your investment time horizon?",
-                "type": "select",
-                "options": [
-                    {"value": "1-3", "label": "1-3 years"},
-                    {"value": "3-7", "label": "3-7 years"},
-                    {"value": "7+", "label": "7+ years"}
-                ],
-                "required": True
-            },
-            {
-                "id": "loss_tolerance",
-                "question": "How much loss can you tolerate? (0 = no loss, 10 = high risk)",
-                "type": "slider",
-                "min": 0,
-                "max": 10,
+                "type": "number",
+                "min": 1,
+                "max": 50,
                 "default": 5,
-                "required": True
-            },
-            {
-                "id": "experience",
-                "question": "What is your investment experience?",
-                "type": "select",
-                "options": [
-                    {"value": "beginner", "label": "Beginner"},
-                    {"value": "intermediate", "label": "Intermediate"},
-                    {"value": "advanced", "label": "Advanced"}
-                ],
+                "unit": "years",
+                "help": "How many years can you invest before needing the money?",
                 "required": True
             }
         ],
-        "description": "This 3-question assessment helps determine your optimal risk profile for portfolio management."
+        "description": "This 2-question assessment helps determine your optimal risk profile for portfolio management."
     }
 

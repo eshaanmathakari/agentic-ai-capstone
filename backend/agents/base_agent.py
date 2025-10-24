@@ -1,4 +1,5 @@
-"""Base agent class with common functionality"""
+"""Base agent class with common functionality
+Implements CrewAI framework for agentic AI behavior"""
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List
@@ -31,7 +32,7 @@ class BaseAgent(ABC):
         }
         self.logger.info(f"Agent {self.name}: {action}", extra=log_entry)
         
-        # TODO: Store in AgentLog model when created
+        ##TODO: Store in AgentLog model when created
         # if self.db_session:
         #     agent_log = AgentLog(
         #         agent_name=self.name,
