@@ -7,6 +7,7 @@ from datetime import datetime
 import json
 import os
 import numpy as np
+import time
 from utils.api_client import APIClient
 
 # Page configuration
@@ -731,8 +732,11 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
                         
                         if response.get("success"):
                             st.success("✅ Risk profile created successfully!")
-                            fetch_risk_profile() # Refresh data in session state
-                            st.rerun()
+                            # Force immediate refresh
+                            st.session_state.risk_profile = None
+                            fetch_risk_profile()
+                            time.sleep(0.5)  # Brief delay for DB commit
+                            st.rerun()  # Reload page to show updated data
                         else:
                             st.error(f"Failed to create risk profile: {response.get('error', 'Unknown error')}")
         return
@@ -808,8 +812,11 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
                     
                     if response.get("success"):
                         st.success("✅ Risk profile updated successfully!")
-                        fetch_risk_profile() # Refresh data in session state
-                        st.rerun()
+                        # Force immediate refresh
+                        st.session_state.risk_profile = None
+                        fetch_risk_profile()
+                        time.sleep(0.5)  # Brief delay for DB commit
+                        st.rerun()  # Reload page to show updated data
                     else:
                         st.error(f"Failed to update risk profile: {response.get('error', 'Unknown error')}")
     

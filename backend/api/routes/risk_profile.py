@@ -114,6 +114,39 @@ async def create_risk_profile(
         return new_profile
 
 
+@router.put("/", response_model=RiskProfileResponse)
+async def update_risk_profile(
+    profile_data: RiskProfileCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update existing risk profile"""
+    profile = db.query(RiskProfile).filter(
+        RiskProfile.user_id == current_user.id
+    ).first()
+    
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    # Calculate risk score from questionnaire
+    risk_score, risk_level = calculate_risk_score(profile_data)
+    
+    # Update fields
+    profile.age = profile_data.age
+    profile.investment_horizon = profile_data.investment_horizon
+    profile.annual_income = profile_data.annual_income
+    profile.net_worth = profile_data.net_worth
+    profile.questionnaire_data = profile_data.questionnaire_data
+    profile.risk_score = risk_score
+    profile.risk_level = risk_level
+    profile.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(profile)
+    
+    return profile
+
+
 @router.get("/", response_model=Optional[RiskProfileResponse])
 async def get_risk_profile(
     current_user: User = Depends(get_current_user),

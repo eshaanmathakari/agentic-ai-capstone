@@ -169,8 +169,16 @@ class APIClient:
         )
     
     def create_or_update_risk_profile(self, risk_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create or update risk profile with questionnaire data"""
-        return self._make_request("POST", "/api/risk-profile/", data=risk_data)
+        """Create or update risk profile"""
+        # Try to get existing profile first
+        existing = self.get_risk_profile()
+        
+        if existing and existing.get('success') and existing.get('data'):
+            # Update existing
+            return self._make_request('PUT', '/api/risk-profile/', data=risk_data)
+        else:
+            # Create new
+            return self._make_request('POST', '/api/risk-profile/', data=risk_data)
     
     def get_analytics(self, portfolio_id: int) -> Dict[str, Any]:
         """Get portfolio analytics"""

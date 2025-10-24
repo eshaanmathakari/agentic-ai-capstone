@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     NEWS_API_KEY: Optional[str] = None
+    POLYGON_API_KEY: Optional[str] = None
     
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000", "http://localhost:8501"]
@@ -43,6 +44,14 @@ class Settings(BaseSettings):
     # Rebalancing Settings
     DEFAULT_REBALANCING_THRESHOLD: float = 0.05  # 5% drift
     TRANSACTION_COST_PERCENTAGE: float = 0.001  # 0.1%
+    
+    # Polygon.io Settings
+    POLYGON_BASE_URL: str = "https://api.polygon.io"
+    POLYGON_RATE_LIMIT: int = 5  # calls per minute
+    
+    # Caching Settings
+    CACHE_EXPIRY_HOURS: int = 1
+    CACHE_MIN_DATA_POINTS: int = 10
     
     class Config:
         env_file = ".env"

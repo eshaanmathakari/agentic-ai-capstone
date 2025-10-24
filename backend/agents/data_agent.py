@@ -8,7 +8,9 @@ from crewai import Agent, Task
 from .base_agent import BaseAgent
 from .tools import (
     fetch_market_data_tool,
-    calculate_indicators_tool
+    calculate_indicators_tool,
+    FETCH_MARKET_DATA_CREW_TOOL,
+    CALCULATE_INDICATORS_CREW_TOOL
 )
 
 logger = logging.getLogger(__name__)
@@ -29,13 +31,13 @@ def create_data_agent(llm=None) -> Agent:
     if crewai_llm and llm is None:
         llm = crewai_llm
 
-    # Use CrewAI Tool objects if available, otherwise use functions directly
+    # Use CrewAI Tool objects if available, otherwise use empty list
     tools_list = [FETCH_MARKET_DATA_CREW_TOOL, CALCULATE_INDICATORS_CREW_TOOL]
     tools_list = [t for t in tools_list if t is not None]
 
-    # Fallback to functions if no Tool objects available
+    # If no valid tools available, use empty list (agents will work without tools)
     if not tools_list:
-        tools_list = [fetch_market_data_tool, calculate_indicators_tool]
+        tools_list = []
 
     return Agent(
         role='Market Data Specialist',
@@ -84,7 +86,7 @@ class DataAgent(BaseAgent):
             days = task_input.get("days", 365)
             
             # Fetch market data (tool returns metadata wrapper)
-            fetch_result = fetch_market_data_tool(symbols, days)
+            fetch_result = fetch_market_data_tool(symbols, days, self.db_session)
             if not fetch_result.get("success"):
                 error_msg = fetch_result.get("error", "Failed to fetch market data")
                 self.log_action("data_task_failed", {"error": error_msg})

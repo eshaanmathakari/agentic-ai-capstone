@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from sqlalchemy import (
     Column, Integer, String, Float, DateTime, ForeignKey, 
-    Text, JSON, Enum as SQLEnum, Boolean
+    Text, JSON, Enum as SQLEnum, Boolean, Index
 )
 from sqlalchemy.orm import relationship, DeclarativeBase
 import enum
@@ -274,4 +274,34 @@ class UserAction(Base):
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CachedMarketData(Base):
+    """Cached market data model for 1-hour TTL caching"""
+    __tablename__ = "cached_market_data"
+    
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(50), nullable=False, index=True)
+    timeframe = Column(String(20), default="1h")  # 1h, 1d, etc.
+    
+    # OHLCV data
+    timestamp = Column(DateTime, nullable=False, index=True)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float)
+    
+    # Technical indicators (computed once, cached)
+    indicators = Column(JSON)  # {sma_20, sma_50, rsi, macd, etc.}
+    
+    # Cache metadata
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime)  # fetched_at + 1 hour
+    data_source = Column(String(50), default="polygon")
+    
+    __table_args__ = (
+        Index('idx_symbol_timestamp', 'symbol', 'timestamp'),
+        Index('idx_expires', 'expires_at'),
+    )
 

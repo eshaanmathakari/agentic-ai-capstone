@@ -11,7 +11,11 @@ from .tools import (
     portfolio_optimizer_tool,
     market_regime_detector_tool,
     risk_calculator_tool,
-    suggest_diversification_assets_tool
+    suggest_diversification_assets_tool,
+    PORTFOLIO_OPTIMIZER_CREW_TOOL,
+    MARKET_REGIME_DETECTOR_CREW_TOOL,
+    RISK_CALCULATOR_CREW_TOOL,
+    DIVERSIFICATION_ASSETS_CREW_TOOL
 )
 
 logger = logging.getLogger(__name__)
@@ -32,13 +36,13 @@ def create_strategy_agent(llm=None) -> Agent:
     if crewai_llm and llm is None:
         llm = crewai_llm
 
-    # Use CrewAI Tool objects if available, otherwise use functions directly
-    tools_list = [PORTFOLIO_OPTIMIZER_CREW_TOOL, MARKET_REGIME_DETECTOR_CREW_TOOL]
+    # Use CrewAI Tool objects if available, otherwise use empty list
+    tools_list = [PORTFOLIO_OPTIMIZER_CREW_TOOL, MARKET_REGIME_DETECTOR_CREW_TOOL, RISK_CALCULATOR_CREW_TOOL, DIVERSIFICATION_ASSETS_CREW_TOOL]
     tools_list = [t for t in tools_list if t is not None]
 
-    # Fallback to functions if no Tool objects available
+    # If no valid tools available, use empty list (agents will work without tools)
     if not tools_list:
-        tools_list = [portfolio_optimizer_tool, market_regime_detector_tool]
+        tools_list = []
 
     return Agent(
         role='Chief Portfolio Strategist',

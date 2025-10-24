@@ -52,3 +52,9 @@ def init_db():
     from .models import Base
     Base.metadata.create_all(bind=engine)
 
+
+def create_caching_tables(engine):
+    """Create caching tables if they don't exist"""
+    from backend.database.models import CachedMarketData
+    Base.metadata.create_all(bind=engine, tables=[CachedMarketData.__table__])
+

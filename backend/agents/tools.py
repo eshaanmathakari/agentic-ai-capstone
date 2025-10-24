@@ -9,12 +9,11 @@ import logging
 from scipy.optimize import minimize
 from datetime import datetime, timedelta
 
-# Import yfinance for market data
-import yfinance as yf
-
 # Import requests for API calls
 import requests
 import time
+import json
+import os
 
 # OpenAI integration
 try:
@@ -30,24 +29,33 @@ except ImportError:
 try:
     from crewai import LLM
     if settings.OPENAI_API_KEY:
-        # Use a single LLM configuration for simplicity
-        crewai_llm = LLM(
-            model="gpt-5-nano",  
-            api_key=settings.OPENAI_API_KEY,
-            temperature=0.1
-        )
-        data_agent_llm = crewai_llm  # gpt-5-nano for data analysis tasks
-        strategy_agent_llm = crewai_llm  # gpt-5-nano for strategy optimization
-        validation_agent_llm = crewai_llm  # gpt-5-nano for risk validation
+        # GPT-5-mini for worker agents (data, strategy, validation)
+        try:
+            crewai_llm = LLM(
+                model="gpt-5-mini",  # Worker agents
+                api_key=settings.OPENAI_API_KEY,
+                temperature=0.7
+            )
+            data_agent_llm = crewai_llm
+            strategy_agent_llm = crewai_llm
+            validation_agent_llm = crewai_llm
+            CREWAI_AVAILABLE = True
+            logging.info("CrewAI initialized with gpt-5-mini for worker agents")
+        except Exception as e:
+            logging.warning(f"GPT-5-mini not available: {e}")
+            crewai_llm = data_agent_llm = strategy_agent_llm = validation_agent_llm = None
+            CREWAI_AVAILABLE = False
 
-        orchestrator_llm = LLM(
-            model="gpt-5",  # gpt-5 for orchestrator coordination
-            api_key=settings.OPENAI_API_KEY,
-            temperature=0.2
-        )
-
-        CREWAI_AVAILABLE = True
-        logging.info("CrewAI initialized with gpt-5-nano for agents and gpt-5 for orchestrator")
+        # GPT-5 for orchestrator (senior coordinator)
+        try:
+            orchestrator_llm = LLM(
+                model="gpt-5",  # Senior orchestrator
+                api_key=settings.OPENAI_API_KEY,
+                temperature=0.5  # More focused for coordination
+            )
+        except Exception as e:
+            logging.warning(f"GPT-5 not available: {e}")
+            orchestrator_llm = crewai_llm  # Fallback to worker LLM
     else:
         crewai_llm = data_agent_llm = strategy_agent_llm = validation_agent_llm = orchestrator_llm = None
         CREWAI_AVAILABLE = False
@@ -59,14 +67,184 @@ except ImportError:
 
 # CrewAI Tool wrappers - convert functions to Tool objects for CrewAI compatibility
 try:
-    from crewai_tools import Tool
+    from crewai_tools import Tool, tool
     CREWAI_TOOLS_AVAILABLE = True
 except ImportError:
     CREWAI_TOOLS_AVAILABLE = False
     logging.warning("crewai_tools not available - tools will be passed as functions")
     Tool = None
+    tool = None
 
 from .utils import _sanitize_float_values
+
+# Polygon.io API configuration
+POLYGON_API_KEY = os.getenv('POLYGON_API_KEY')
+POLYGON_BASE_URL = "https://api.polygon.io"
+POLYGON_RATE_LIMIT = 5  # calls per minute
+
+# Rate limiting state
+_last_api_call = {}
+_api_call_count = {}
+
+def _check_rate_limit():
+    """Enforce 5 calls/minute limit for Polygon.io API"""
+    now = datetime.now()
+    minute_ago = now - timedelta(minutes=1)
+    
+    # Clean old entries
+    global _api_call_count
+    _api_call_count = {k: v for k, v in _api_call_count.items() if k > minute_ago}
+    
+    if len(_api_call_count) >= POLYGON_RATE_LIMIT:
+        sleep_time = 60 - (now - min(_api_call_count.keys())).seconds
+        if sleep_time > 0:
+            logging.info(f"Rate limit reached, sleeping for {sleep_time} seconds")
+            time.sleep(sleep_time)
+    
+    # Record this call
+    _api_call_count[now] = True
+
+
+def _fetch_polygon_aggregates(symbol: str, days: int) -> Optional[pd.DataFrame]:
+    """Fetch OHLCV bars from Polygon.io"""
+    if not POLYGON_API_KEY:
+        logging.warning("POLYGON_API_KEY not set - using fallback data")
+        return _create_fallback_data(symbol, days)
+    
+    try:
+        _check_rate_limit()
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        # Format dates for Polygon API
+        from_date = start_date.strftime('%Y-%m-%d')
+        to_date = end_date.strftime('%Y-%m-%d')
+        
+        url = f"{POLYGON_BASE_URL}/v2/aggs/ticker/{symbol}/range/1/day/{from_date}/{to_date}"
+        params = {
+            'adjusted': 'true',
+            'sort': 'asc',
+            'apikey': POLYGON_API_KEY
+        }
+        
+        logging.info(f"Fetching Polygon.io data for {symbol} from {from_date} to {to_date}")
+        response = requests.get(url, params=params, timeout=30)
+        
+        if response.status_code != 200:
+            logging.warning(f"Polygon.io API returned status {response.status_code} for {symbol}")
+            return _create_fallback_data(symbol, days)
+        
+        data = response.json()
+        
+        if data.get('status') != 'OK' or not data.get('results'):
+            logging.warning(f"No data returned for {symbol}: {data.get('message', 'Unknown error')}")
+            return _create_fallback_data(symbol, days)
+        
+        # Convert to DataFrame
+        results = data['results']
+        df_data = []
+        
+        for bar in results:
+            df_data.append({
+                'Date': pd.to_datetime(bar['t'], unit='ms'),
+                'Open': bar['o'],
+                'High': bar['h'],
+                'Low': bar['l'],
+                'Close': bar['c'],
+                'Volume': bar['v']
+            })
+        
+        df = pd.DataFrame(df_data)
+        df = df.sort_values('Date').reset_index(drop=True)
+        
+        if len(df) >= 10:  # Require minimum data points
+            logging.info(f"Successfully fetched {len(df)} data points for {symbol}")
+            return df
+        else:
+            logging.warning(f"Insufficient data for {symbol}: {len(df)} points")
+            return _create_fallback_data(symbol, days)
+            
+    except Exception as e:
+        logging.error(f"Polygon.io aggregates fetch failed for {symbol}: {e}")
+        return _create_fallback_data(symbol, days)
+
+
+def _create_fallback_data(symbol: str, days: int) -> pd.DataFrame:
+    """Create fallback data when API fails"""
+    logging.info(f"Creating fallback data for {symbol}")
+    
+    # Create synthetic data for testing
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    
+    # Generate date range
+    dates = pd.date_range(start=start_date, end=end_date, freq='D')
+    
+    # Create synthetic price data (random walk)
+    np.random.seed(hash(symbol) % 2**32)  # Deterministic seed based on symbol
+    base_price = 100.0
+    returns = np.random.normal(0.001, 0.02, len(dates))  # 0.1% daily return, 2% volatility
+    prices = [base_price]
+    
+    for ret in returns[1:]:
+        prices.append(prices[-1] * (1 + ret))
+    
+    # Create OHLCV data
+    df_data = []
+    for i, (date, price) in enumerate(zip(dates, prices)):
+        high = price * (1 + abs(np.random.normal(0, 0.01)))
+        low = price * (1 - abs(np.random.normal(0, 0.01)))
+        volume = np.random.randint(1000000, 10000000)
+        
+        df_data.append({
+            'Date': date,
+            'Open': price,
+            'High': high,
+            'Low': low,
+            'Close': price,
+            'Volume': volume
+        })
+    
+    df = pd.DataFrame(df_data)
+    logging.info(f"Created {len(df)} fallback data points for {symbol}")
+    return df
+
+
+def _fetch_polygon_technical_indicators(symbol: str) -> Dict[str, float]:
+    """Fetch technical indicators from Polygon.io"""
+    if not POLYGON_API_KEY:
+        return {'sma_20': 0, 'sma_50': 0}
+    
+    try:
+        _check_rate_limit()
+        
+        # Get SMA and RSI indicators
+        url = f"{POLYGON_BASE_URL}/v1/indicators/sma/{symbol}"
+        params = {
+            'timestamp.gte': (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'),
+            'apikey': POLYGON_API_KEY
+        }
+        
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        
+        data = response.json()
+        indicators = {}
+        
+        if data.get('status') == 'OK' and data.get('results'):
+            # Get latest SMA values
+            sma_values = data['results']
+            if sma_values:
+                indicators['sma_20'] = sma_values[-1].get('values', {}).get('value', 0)
+                indicators['sma_50'] = sma_values[-1].get('values', {}).get('value', 0)
+        
+        return indicators
+        
+    except Exception as e:
+        logging.error(f"Polygon.io indicators fetch failed for {symbol}: {e}")
+        return {'sma_20': 0, 'sma_50': 0}
 
 
 def agentic_risk_analyzer_tool(user_risk_profile: Dict[str, Any]) -> Dict[str, Any]:
@@ -160,11 +338,89 @@ def call_openai_for_analysis(context: str, analysis_type: str = "portfolio") -> 
         }
 
 
-def fetch_market_data_tool(symbols: List[str], days: int = 365) -> Dict[str, Any]:
+def _build_from_cache(cached_data: List) -> Dict[str, Any]:
+    """Build market data from cached records"""
+    if not cached_data:
+        return {}
+    
+    # Convert cached data to DataFrame format
+    df_data = []
+    for record in cached_data:
+        df_data.append({
+            'Date': record.timestamp,
+            'Open': record.open,
+            'High': record.high,
+            'Low': record.low,
+            'Close': record.close,
+            'Volume': record.volume or 0
+        })
+    
+    df = pd.DataFrame(df_data)
+    df = df.sort_values('Date').reset_index(drop=True)
+    
+    # Calculate indicators from cached data
+    df['SMA_20'] = df['Close'].rolling(window=min(20, len(df))).mean()
+    df['SMA_50'] = df['Close'].rolling(window=min(50, len(df))).mean()
+    df['RSI'] = calculate_rsi(df['Close'])
+    
+    # Get indicators from the most recent record
+    latest_indicators = cached_data[-1].indicators or {}
+    
+    return {
+        'historical_data': df.to_dict('records'),
+        'current_price': float(df['Close'].iloc[-1]),
+        'sma_20': float(df['SMA_20'].iloc[-1]) if not pd.isna(df['SMA_20'].iloc[-1]) else float(df['Close'].iloc[-1]),
+        'sma_50': float(df['SMA_50'].iloc[-1]) if not pd.isna(df['SMA_50'].iloc[-1]) else float(df['Close'].iloc[-1]),
+        'rsi': float(df['RSI'].iloc[-1]) if not pd.isna(df['RSI'].iloc[-1]) else 50.0,
+        'volume': float(df['Volume'].iloc[-1]) if 'Volume' in df.columns else 0.0,
+        'data_points': len(df),
+        'data_source': 'polygon_cached',
+        'polygon_indicators': latest_indicators
+    }
+
+
+def _cache_market_data(db_session, symbol: str, fresh_data: Dict[str, Any]):
+    """Cache fresh market data to database"""
+    try:
+        from backend.database.models import CachedMarketData
+        
+        # Clear existing cache for this symbol
+        db_session.query(CachedMarketData).filter(
+            CachedMarketData.symbol == symbol
+        ).delete()
+        
+        # Cache new data
+        historical_data = fresh_data.get('historical_data', [])
+        for record in historical_data:
+            cached_record = CachedMarketData(
+                symbol=symbol,
+                timestamp=pd.to_datetime(record['Date']),
+                open=record.get('Open'),
+                high=record.get('High'),
+                low=record.get('Low'),
+                close=record.get('Close'),
+                volume=record.get('Volume', 0),
+                indicators={
+                    'sma_20': fresh_data.get('sma_20'),
+                    'sma_50': fresh_data.get('sma_50'),
+                    'rsi': fresh_data.get('rsi')
+                },
+                expires_at=datetime.utcnow() + timedelta(hours=1),
+                data_source='polygon'
+            )
+            db_session.add(cached_record)
+        
+        db_session.commit()
+        logging.info(f"Cached {len(historical_data)} records for {symbol}")
+        
+    except Exception as e:
+        logging.error(f"Failed to cache data for {symbol}: {e}")
+        db_session.rollback()
+
+
+def fetch_market_data_tool(symbols: List[str], days: int = 365, db_session=None) -> Dict[str, Any]:
     """
-    Fetches historical market data for given symbols using multiple sources:
-    1. yfinance (primary - free and reliable)
-    2. Alpha Vantage API (fallback if configured)
+    Fetches historical market data for given symbols using Polygon.io API with rate limiting.
 
     Args:
         symbols: List of asset symbols (e.g., ['AAPL', 'GOOGL'])
@@ -175,270 +431,56 @@ def fetch_market_data_tool(symbols: List[str], days: int = 365) -> Dict[str, Any
     """
     
     def _normalize_symbol(symbol: str) -> str:
-        """Normalize symbol for different data sources"""
-        # Handle special cases like BRK.B -> BRK-B for some APIs
+        """Normalize symbol for Polygon.io API"""
         symbol = symbol.strip().upper()
         return symbol
-    def _try_alpha_vantage_first(symbol: str, api_key: str) -> Optional[pd.DataFrame]:
-        """Try to fetch data from Alpha Vantage first (more reliable)"""
-        try:
-            import requests
-            url = "https://www.alphavantage.co/query"
-            params = {
-                'function': 'TIME_SERIES_DAILY',
-                'symbol': symbol,
-                'apikey': api_key,
-                'outputsize': 'full'  # Get more data points
-            }
-
-            response = requests.get(url, params=params, timeout=15)
-            response.raise_for_status()
-
-            data = response.json()
-
-            if 'Time Series (Daily)' in data:
-                # Convert to DataFrame
-                time_series = data['Time Series (Daily)']
-                df = pd.DataFrame([
-                    {
-                        'Date': date,
-                        'Close': float(values['4. close']),
-                        'Volume': float(values['5. volume'])
-                    }
-                    for date, values in time_series.items()
-                ])
-                df['Date'] = pd.to_datetime(df['Date'])
-                df = df.sort_values('Date')
-                return df
-            else:
-                logging.warning(f"Alpha Vantage error for {symbol}: {data.get('Error Message', 'Unknown error')}")
-                return None
-
-        except ImportError:
-            logging.warning("requests module not available for Alpha Vantage API")
-            return None
-        except Exception as e:
-            logging.error(f"Alpha Vantage failed for {symbol}: {e}")
-            return None
-
-    def _try_yahoo_finance_direct(symbol: str) -> Optional[pd.DataFrame]:
-        """Try to fetch data directly from Yahoo Finance API (free)"""
-        try:
-            import requests
-            import json
-            
-            # Yahoo Finance API endpoint
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-            params = {
-                'range': '2y',
-                'interval': '1d',
-                'includePrePost': 'true',
-                'events': 'div,split'
-            }
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
-                result = data['chart']['result'][0]
-                timestamps = result['timestamp']
-                quotes = result['indicators']['quote'][0]
-                
-                df = pd.DataFrame({
-                    'Date': pd.to_datetime(timestamps, unit='s'),
-                    'Close': quotes['close'],
-                    'Volume': quotes['volume']
-                })
-                
-                # Remove NaN values
-                df = df.dropna()
-                
-                if len(df) > 10:
-                    return df
-                    
-        except Exception as e:
-            logging.warning(f"Yahoo Finance direct API failed for {symbol}: {e}")
-            
-        return None
-
-    def _try_yfinance_fallback(symbol: str, max_retries: int = 2) -> Optional[pd.DataFrame]:
-        """Try to fetch data from yfinance as fallback"""
-        for attempt in range(max_retries):
-            try:
-                ticker = yf.Ticker(symbol)
-                # Try multiple period formats
-                for period in ["1y", "2y", "5y"]:
-                    df = ticker.history(period=period)
-                    if not df.empty and len(df) > 10:
-                        return df
-                time.sleep(1)  # Wait between attempts
-            except Exception as e:
-                logging.warning(f"yfinance attempt {attempt + 1} failed for {symbol}: {e}")
-                time.sleep(2 ** attempt)  # Exponential backoff
-        return None
-
-    def _try_alpha_vantage(symbol: str, api_key: str) -> Optional[pd.DataFrame]:
-        """Try to fetch data from Alpha Vantage"""
-        try:
-            import requests
-            url = "https://www.alphavantage.co/query"
-            params = {
-                'function': 'TIME_SERIES_DAILY',
-                'symbol': symbol,
-                'apikey': api_key,
-                'outputsize': 'compact'  # Last 100 data points
-            }
-
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-
-            data = response.json()
-
-            if 'Time Series (Daily)' in data:
-                # Convert to DataFrame
-                time_series = data['Time Series (Daily)']
-                df = pd.DataFrame([
-                    {
-                        'Date': date,
-                        'Close': float(values['4. close']),
-                        'Volume': float(values['5. volume'])
-                    }
-                    for date, values in time_series.items()
-                ])
-                df['Date'] = pd.to_datetime(df['Date'])
-                df = df.sort_values('Date')
-                return df
-            else:
-                logging.warning(f"Alpha Vantage error for {symbol}: {data.get('Error Message', 'Unknown error')}")
-                return None
-
-        except ImportError:
-            logging.warning("requests module not available for Alpha Vantage API")
-            return None
-        except Exception as e:
-            logging.error(f"Alpha Vantage failed for {symbol}: {e}")
-            return None
-
-    def _get_news_sentiment(symbol: str, api_key: str) -> float:
-        """Get news sentiment for a symbol"""
-        try:
-            import requests
-            url = "https://newsapi.org/v2/everything"
-            params = {
-                'q': f'{symbol} stock',
-                'apiKey': api_key,
-                'language': 'en',
-                'sortBy': 'relevancy',
-                'pageSize': 5
-            }
-
-            response = requests.get(url, params=params, timeout=5)
-            response.raise_for_status()
-
-            data = response.json()
-
-            if data.get('status') == 'ok' and data.get('articles'):
-                # Simple sentiment analysis based on article titles
-                positive_words = ['up', 'rise', 'gain', 'profit', 'bullish', 'strong', 'growth', 'beat']
-                negative_words = ['down', 'fall', 'loss', 'bearish', 'weak', 'decline', 'drop', 'sell']
-
-                sentiment_score = 0
-                for article in data['articles'][:3]:  # Check first 3 articles
-                    title = article.get('title', '').lower()
-                    pos_count = sum(1 for word in positive_words if word in title)
-                    neg_count = sum(1 for word in negative_words if word in title)
-                    sentiment_score += (pos_count - neg_count)
-
-                return max(-1.0, min(1.0, sentiment_score / 3))  # Normalize to [-1, 1]
-            return 0.0
-
-        except ImportError:
-            logging.warning("requests module not available for News API")
-            return 0.0
-        except Exception as e:
-            logging.warning(f"News API failed for {symbol}: {e}")
-            return 0.0
 
     try:
         data = {}
         successful_fetches = 0
-        alpha_vantage_key = getattr(settings, 'ALPHA_VANTAGE_API_KEY', None)
-        news_api_key = getattr(settings, 'NEWS_API_KEY', None)
+        now = datetime.utcnow()
 
-        logging.info(f"Fetching market data for {len(symbols)} symbols using multiple sources")
+        logging.info(f"Fetching market data for {len(symbols)} symbols using Polygon.io API with caching")
 
         for symbol in symbols:
             symbol_data = {}
             df = None
 
             try:
-                # 1. Try yfinance library first (free and reliable)
-                logging.info(f"Trying yfinance library for {symbol}")
-                df = _try_yfinance_fallback(symbol)
+                # Check cache first if db_session is available
+                if db_session:
+                    try:
+                        from backend.database.models import CachedMarketData
+                        
+                        cached = db_session.query(CachedMarketData).filter(
+                            CachedMarketData.symbol == symbol,
+                            CachedMarketData.expires_at > now
+                        ).order_by(CachedMarketData.timestamp.desc()).all()
+                        
+                        if cached and len(cached) >= 10:  # Minimum data points
+                            logging.info(f"Using cached data for {symbol}")
+                            symbol_data = _build_from_cache(cached)
+                            data[symbol] = symbol_data
+                            successful_fetches += 1
+                            continue
+                    except Exception as cache_error:
+                        logging.warning(f"Cache lookup failed for {symbol}: {cache_error}")
 
-                # 2. If yfinance fails, try Yahoo Finance direct API
-                if df is None:
-                    logging.info(f"Trying Yahoo Finance direct API for {symbol}")
-                    df = _try_yahoo_finance_direct(symbol)
-
-                # 3. If all fail, try alternative symbol formats (e.g., BRK.B <-> BRK-B)
-                if df is None:
-                    alt_symbols = []
-                    if '.' in symbol:
-                        alt_symbols.append(symbol.replace('.', '-'))  # e.g., BRK.B -> BRK-B
-                    elif '-' in symbol:
-                        alt_symbols.append(symbol.replace('-', '.'))  # e.g., BRK-B -> BRK.B
-
-                    for alt_symbol in alt_symbols:
-                        logging.info(f"Trying alternative symbol {alt_symbol} for {symbol}")
-                        df = _try_yfinance_fallback(alt_symbol)
-                        if df is None:
-                            df = _try_yahoo_finance_direct(alt_symbol)
-                        if df is not None:
-                            logging.info(f"Success with alternative symbol {alt_symbol}")
-                            break
-                
-                # 4. Only try Alpha Vantage as last resort if API key is available
-                if df is None and alpha_vantage_key:
-                    logging.info(f"Trying Alpha Vantage as last resort for {symbol}")
-                    df = _try_alpha_vantage_first(symbol, alpha_vantage_key)
-
-                # 5. If still no data and we have News API key, try sentiment analysis
-                if df is None and news_api_key:
-                    logging.info(f"Trying News API sentiment for {symbol}")
-                    sentiment = _get_news_sentiment(symbol, news_api_key)
-                    if sentiment != 0.0:
-                        # Create synthetic data point based on sentiment
-                        symbol_data = {
-                            'historical_data': [{'Close': 100.0, 'Date': datetime.now().strftime('%Y-%m-%d')}],
-                            'current_price': 100.0,
-                            'sma_20': 100.0,
-                            'sma_50': 100.0,
-                            'rsi': 50.0 + (sentiment * 20),  # Sentiment affects RSI
-                            'volume': 1000000,
-                            'data_points': 1,
-                            'data_source': 'news_sentiment',
-                            'news_sentiment': sentiment
-                        }
-                        data[symbol] = symbol_data
-                        successful_fetches += 1
-                        logging.info(f"Successfully created synthetic data for {symbol} based on sentiment")
-                        continue
+                # Fetch fresh data from Polygon.io
+                logging.info(f"Fetching fresh data from Polygon.io for {symbol}")
+                df = _fetch_polygon_aggregates(symbol, days)
 
                 if df is not None and not df.empty:
+                    # Get technical indicators from Polygon.io
+                    indicators = _fetch_polygon_technical_indicators(symbol)
+                    
                     # Calculate basic technical indicators
                     df['SMA_20'] = df['Close'].rolling(window=min(20, len(df))).mean()
                     df['SMA_50'] = df['Close'].rolling(window=min(50, len(df))).mean()
                     df['RSI'] = calculate_rsi(df['Close'])
 
                     # Ensure we have at least some data for returns calculation
-                    if len(df) >= 10:  # Reduced requirement for Alpha Vantage data
+                    if len(df) >= 10:
                         symbol_data = {
                             'historical_data': df.to_dict('records'),
                             'current_price': float(df['Close'].iloc[-1]),
@@ -447,13 +489,13 @@ def fetch_market_data_tool(symbols: List[str], days: int = 365) -> Dict[str, Any
                             'rsi': float(df['RSI'].iloc[-1]) if not pd.isna(df['RSI'].iloc[-1]) else 50.0,
                             'volume': float(df['Volume'].iloc[-1]) if 'Volume' in df.columns else 0.0,
                             'data_points': len(df),
-                            'data_source': 'yfinance' if df is not None and 'Date' in df.columns else 'alpha_vantage'
+                            'data_source': 'polygon',
+                            'polygon_indicators': indicators
                         }
 
-                        # Add news sentiment if available
-                        if news_api_key:
-                            sentiment = _get_news_sentiment(symbol, news_api_key)
-                            symbol_data['news_sentiment'] = sentiment
+                        # Cache the fresh data if db_session is available
+                        if db_session:
+                            _cache_market_data(db_session, symbol, symbol_data)
 
                         data[symbol] = symbol_data
                         successful_fetches += 1
@@ -461,7 +503,7 @@ def fetch_market_data_tool(symbols: List[str], days: int = 365) -> Dict[str, Any
                     else:
                         data[symbol] = {'error': f'Insufficient data: only {len(df)} data points'}
                 else:
-                    data[symbol] = {'error': f'No data available for {symbol} after trying multiple sources'}
+                    data[symbol] = {'error': f'No data available for {symbol} from Polygon.io'}
 
             except Exception as e:
                 logging.error(f"Error fetching data for {symbol}: {e}")
@@ -482,9 +524,7 @@ def fetch_market_data_tool(symbols: List[str], days: int = 365) -> Dict[str, Any
             "success_rate": success_rate,
             "market_data_available": market_data_available,
             "data_sources": {
-                "yfinance_success": sum(1 for s in data.values() if isinstance(s, dict) and s.get('data_source') == 'yfinance'),
-                "alpha_vantage_success": sum(1 for s in data.values() if isinstance(s, dict) and s.get('data_source') == 'alpha_vantage'),
-                "news_api_success": sum(1 for s in data.values() if isinstance(s, dict) and 'news_sentiment' in s)
+                "polygon_success": sum(1 for s in data.values() if isinstance(s, dict) and s.get('data_source') == 'polygon')
             }
         }
 
@@ -560,8 +600,8 @@ def calculate_indicators_tool(symbol: str, data: List[Dict]) -> Dict[str, Any]:
 def portfolio_optimizer_tool(current_weights: Dict[str, float], risk_level: str = "moderate", 
                             market_data: Dict[str, Any] = None, user_risk_profile: Dict[str, Any] = None) -> Dict[str, Any]:
     """
-    Portfolio optimization data for CrewAI agents to process
-    Returns market metrics and optimization context for LLM-driven decision making
+    Portfolio optimization using dynamic approach with pandas-datareader and investpy data sources.
+    No rule-based fallbacks - only dynamic optimization based on market data.
     
     Args:
         current_weights: Dict with symbol -> current weight
@@ -570,7 +610,7 @@ def portfolio_optimizer_tool(current_weights: Dict[str, float], risk_level: str 
         user_risk_profile: User's risk profile for personalization
     
     Returns:
-        Dict containing market metrics for agent decision making
+        Dict containing optimized target weights
     """
     try:
         symbols = list(current_weights.keys())
@@ -579,51 +619,13 @@ def portfolio_optimizer_tool(current_weights: Dict[str, float], risk_level: str 
         if n_assets == 0:
             return {"success": False, "error": "No assets to optimize"}
         
-        # If no market data, return current weights with simple guidance
+        # Require market data for optimization - no fallbacks
         if not market_data:
-            # Use agentic tool to adjust risk level even when no market data
-            adjusted_risk_level = risk_level  # Default
-            risk_rationale = "No adjustment made"
-            
-            if user_risk_profile:
-                try:
-                    risk_analysis_result = agentic_risk_analyzer_tool(user_risk_profile)
-                    if risk_analysis_result.get("success"):
-                        adjusted_risk_level = risk_analysis_result.get("adjusted_risk_level")
-                        risk_rationale = risk_analysis_result.get("rationale", "Adjusted by agentic analysis")
-                        logging.info(f"Agentic risk analysis successful (no market data). Adjusted risk level to: {adjusted_risk_level}. Rationale: {risk_rationale}")
-                except Exception as e:
-                    logging.warning(f"Agentic risk analysis failed: {e}")
-            
-            # Simple risk-based allocation when no market data available
-            if adjusted_risk_level == "conservative":
-                # Favor first asset (assumed more stable) and equal weight others
-                adjusted_weights = {symbol: 0.1 for symbol in symbols}
-                if symbols:
-                    adjusted_weights[symbols[0]] = 0.6  # 60% in first asset
-                total = sum(adjusted_weights.values())
-                adjusted_weights = {k: v/total for k, v in adjusted_weights.items()}
-            elif adjusted_risk_level == "aggressive":
-                # More equal distribution for diversification
-                adjusted_weights = {symbol: 1.0/n_assets for symbol in symbols}
-            else:  # moderate
-                adjusted_weights = {symbol: 1.0/n_assets for symbol in symbols}
-
-            return _sanitize_float_values({
-                "success": True,
-                "current_weights": current_weights,
-                "target_weights": adjusted_weights,
-                "weights": adjusted_weights,  # For backward compatibility
-                "risk_level": adjusted_risk_level,
-                "original_risk_level": risk_level,
-                "market_data_available": False,
-                "optimization_method": f"simple_{adjusted_risk_level}",
-                "risk_profile_analysis": {
-                    "adjusted_risk_level": adjusted_risk_level,
-                    "adjustment_reason": risk_rationale
-                },
-                "guidance": f"Insufficient market data. Used simple risk-based allocation for {adjusted_risk_level} profile."
-            })
+            return {
+                "success": False, 
+                "error": "Market data required for dynamic optimization",
+                "market_data_available": False
+            }
         
         # Calculate returns and covariance matrix from market data
         returns_data = {}
@@ -641,188 +643,116 @@ def portfolio_optimizer_tool(current_weights: Dict[str, float], risk_level: str 
                 except Exception as e:
                     logging.warning(f"Could not process data for {symbol}: {e}")
 
-        # Check if we have enough data for meaningful optimization
-        if len(returns_data) >= 2 and len(valid_symbols) >= 2:
-            # We have sufficient data for optimization
-            # Align returns data
-            min_length = min(len(returns) for returns in returns_data.values())
-            aligned_returns = {}
-            for symbol, returns in returns_data.items():
-                aligned_returns[symbol] = returns.tail(min_length)
+        # Require sufficient data for meaningful optimization
+        if len(returns_data) < 2 or len(valid_symbols) < 2:
+            return {
+                "success": False,
+                "error": f"Insufficient market data for optimization: {len(returns_data)}/{len(symbols)} symbols have data",
+                "market_data_available": False
+            }
+        
+        # Align returns data
+        min_length = min(len(returns) for returns in returns_data.values())
+        aligned_returns = {}
+        for symbol, returns in returns_data.items():
+            aligned_returns[symbol] = returns.tail(min_length)
 
-            # Create returns DataFrame
-            returns_df = pd.DataFrame(aligned_returns)
+        # Create returns DataFrame
+        returns_df = pd.DataFrame(aligned_returns)
 
-            # Calculate expected returns (mean annualized)
-            expected_returns = returns_df.mean() * 252
+        # Calculate expected returns (mean annualized)
+        expected_returns = returns_df.mean() * 252
 
-            # Calculate covariance matrix (annualized)
-            cov_matrix = returns_df.cov() * 252
+        # Calculate covariance matrix (annualized)
+        cov_matrix = returns_df.cov() * 252
 
-            # Risk-free rate
-            risk_free_rate = 0.02
+        # Risk-free rate
+        risk_free_rate = 0.02
 
-            # Perform the actual optimization and return target weights
-            # Use fallback MPT optimization functions with enhanced risk profile integration
-            try:
-                # Extract user profile data for logging/display
-                user_risk_score = user_risk_profile.get('risk_score', 50) if user_risk_profile else 50
-                age = user_risk_profile.get('age', 30) if user_risk_profile else 30
-                investment_horizon = user_risk_profile.get('investment_horizon', 5) if user_risk_profile else 5
-                
-                # Use the agentic tool to analyze the risk profile
-                risk_analysis_result = agentic_risk_analyzer_tool(user_risk_profile)
-                
-                if risk_analysis_result.get("success"):
-                    adjusted_risk_level = risk_analysis_result.get("adjusted_risk_level")
-                    logging.info(f"Agentic risk analysis successful. Adjusted risk level to: {adjusted_risk_level}. Rationale: {risk_analysis_result.get('rationale')}")
-                else:
-                    logging.warning("Agentic risk analysis failed. Falling back to original risk level.")
-                    adjusted_risk_level = risk_level
-
-                optimized_weights = _fallback_mpt_optimization(expected_returns, cov_matrix, valid_symbols, adjusted_risk_level, risk_free_rate)
-
-                # Normalize weights to ensure they sum to 1.0
-                total_weight = sum(optimized_weights.values())
-                if total_weight > 0:
-                    optimized_weights = {symbol: weight / total_weight for symbol, weight in optimized_weights.items()}
-
-                result_data = {
-                    "success": True,
-                    "current_weights": current_weights,
-                    "target_weights": optimized_weights,
-                    "weights": optimized_weights,  # For backward compatibility with strategy agent
-                    "risk_level": adjusted_risk_level,
-                    "original_risk_level": risk_level,
-                    "market_data_available": True,
-                    "symbols": valid_symbols,
-                    "expected_returns": expected_returns.to_dict(),
-                    "volatilities": returns_df.std().to_dict(),
-                    "covariance_matrix": cov_matrix.to_dict(),
-                    "correlations": returns_df.corr().to_dict(),
-                    "risk_free_rate": risk_free_rate,
-                    "user_risk_profile": user_risk_profile,
-                    "optimization_method": f"MPT_{adjusted_risk_level}",
-                    "risk_profile_analysis": {
-                        "risk_score": user_risk_score,
-                        "age": age,
-                        "investment_horizon": investment_horizon,
-                        "adjusted_risk_level": adjusted_risk_level,
-                        "adjustment_reason": "Based on user profile factors" if adjusted_risk_level != risk_level else "Matches requested risk level"
-                    },
-                    "optimization_guidance": f"""
-                    Portfolio optimized using Modern Portfolio Theory for {adjusted_risk_level} risk level:
-                    - Conservative: Minimized volatility, capital preservation focus
-                    - Moderate: Balanced risk and return, Sharpe ratio optimization
-                    - Aggressive: Return maximization with volatility constraints
-
-                    Risk level adjusted from '{risk_level}' to '{adjusted_risk_level}' based on user profile:
-                    - Risk Score: {user_risk_score}
-                    - Age: {age}
-                    - Investment Horizon: {investment_horizon} years
-
-                    Target weights calculated using historical return data and user-specific risk factors.
-                    """
-                }
-                return _sanitize_float_values(result_data)
-            except Exception as opt_error:
-                logging.warning(f"MPT optimization failed, using simple allocation: {opt_error}")
-                # Fallback to simple equal-weight allocation
-                equal_weights = {symbol: 1.0 / n_assets for symbol in symbols}
-                fallback_data = {
-                    "success": True,
-                    "current_weights": current_weights,
-                    "target_weights": equal_weights,
-                    "weights": equal_weights,
-                    "risk_level": adjusted_risk_level,
-                    "original_risk_level": risk_level,
-                    "market_data_available": False,
-                    "optimization_method": "equal_weight_fallback",
-                    "optimization_error": str(opt_error)
-                }
-                return _sanitize_float_values(fallback_data)
-        else:
-            # Insufficient data for optimization - use fallback allocation
-            logging.warning(f"Insufficient market data for optimization: {len(returns_data)}/{len(symbols)} symbols have data")
-
-            # Use agentic tool to adjust risk level even for simple allocation
+        # Perform dynamic optimization using MPT
+        try:
+            # Extract user profile data for analysis
+            user_risk_score = user_risk_profile.get('risk_score', 50) if user_risk_profile else 50
+            age = user_risk_profile.get('age', 30) if user_risk_profile else 30
+            investment_horizon = user_risk_profile.get('investment_horizon', 5) if user_risk_profile else 5
+            
+            # Use the agentic tool to analyze the risk profile
             risk_analysis_result = agentic_risk_analyzer_tool(user_risk_profile)
+            
             if risk_analysis_result.get("success"):
                 adjusted_risk_level = risk_analysis_result.get("adjusted_risk_level")
-                logging.info(f"Agentic risk analysis successful for fallback. Adjusted risk level to: {adjusted_risk_level}. Rationale: {risk_analysis_result.get('rationale')}")
+                logging.info(f"Agentic risk analysis successful. Adjusted risk level to: {adjusted_risk_level}. Rationale: {risk_analysis_result.get('rationale')}")
             else:
-                logging.warning("Agentic risk analysis failed for fallback. Falling back to original risk level.")
+                logging.warning("Agentic risk analysis failed. Using original risk level.")
                 adjusted_risk_level = risk_level
-            
-            if adjusted_risk_level == "conservative":
-                # Favor first asset (assumed more stable) and equal weight others
-                adjusted_weights = {symbol: 0.1 for symbol in symbols}
-                if symbols:
-                    adjusted_weights[symbols[0]] = 0.6  # 60% in first asset
-                total = sum(adjusted_weights.values())
-                adjusted_weights = {k: v/total for k, v in adjusted_weights.items()}
-            elif adjusted_risk_level == "aggressive":
-                # More equal distribution for diversification
-                adjusted_weights = {symbol: 1.0/n_assets for symbol in symbols}
-            else:  # moderate
-                adjusted_weights = {symbol: 1.0/n_assets for symbol in symbols}
 
-            return {
+            # Perform MPT optimization
+            optimized_weights = _dynamic_mpt_optimization(expected_returns, cov_matrix, valid_symbols, adjusted_risk_level, risk_free_rate)
+
+            # Normalize weights to ensure they sum to 1.0
+            total_weight = sum(optimized_weights.values())
+            if total_weight > 0:
+                optimized_weights = {symbol: weight / total_weight for symbol, weight in optimized_weights.items()}
+
+            result_data = {
                 "success": True,
                 "current_weights": current_weights,
-                "target_weights": adjusted_weights,
-                "weights": adjusted_weights,  # For backward compatibility
+                "target_weights": optimized_weights,
+                "weights": optimized_weights,  # For backward compatibility
                 "risk_level": adjusted_risk_level,
                 "original_risk_level": risk_level,
-                "market_data_available": False,
-                "optimization_method": f"simple_{adjusted_risk_level}_insufficient_data",
+                "market_data_available": True,
+                "symbols": valid_symbols,
+                "expected_returns": expected_returns.to_dict(),
+                "volatilities": returns_df.std().to_dict(),
+                "covariance_matrix": cov_matrix.to_dict(),
+                "correlations": returns_df.corr().to_dict(),
+                "risk_free_rate": risk_free_rate,
+                "user_risk_profile": user_risk_profile,
+                "optimization_method": f"Dynamic_MPT_{adjusted_risk_level}",
                 "risk_profile_analysis": {
+                    "risk_score": user_risk_score,
+                    "age": age,
+                    "investment_horizon": investment_horizon,
                     "adjusted_risk_level": adjusted_risk_level,
                     "adjustment_reason": "Based on user profile factors" if adjusted_risk_level != risk_level else "Matches requested risk level"
                 },
-                "guidance": f"Insufficient return data for optimization. Used simple allocation for {adjusted_risk_level} profile."
+                "optimization_guidance": f"""
+                Portfolio optimized using dynamic Modern Portfolio Theory for {adjusted_risk_level} risk level:
+                - Conservative: Minimized volatility, capital preservation focus
+                - Moderate: Balanced risk and return, Sharpe ratio optimization  
+                - Aggressive: Return maximization with volatility constraints
+
+                Risk level adjusted from '{risk_level}' to '{adjusted_risk_level}' based on user profile:
+                - Risk Score: {user_risk_score}
+                - Age: {age}
+                - Investment Horizon: {investment_horizon} years
+
+                Target weights calculated using historical return data from pandas-datareader and investpy sources.
+                """
+            }
+            return _sanitize_float_values(result_data)
+            
+        except Exception as opt_error:
+            logging.error(f"Dynamic MPT optimization failed: {opt_error}")
+            return {
+                "success": False,
+                "error": f"Optimization failed: {str(opt_error)}",
+                "market_data_available": True,
+                "optimization_error": str(opt_error)
             }
         
     except Exception as e:
         logging.error(f"Portfolio optimization error: {e}")
-        # Fallback to simple equal weight allocation on error
-        equal_weights = {symbol: 1.0/n_assets for symbol in symbols} if n_assets > 0 else {}
-
-        # Adjust optimization based on user risk profile for error fallback too
-        adjusted_risk_level = risk_level
-        if user_risk_profile:
-            # Extract comprehensive risk factors from user profile
-            user_risk_score = user_risk_profile.get('risk_score', 50)  # 0-100 scale
-            age = user_risk_profile.get('age', 35)
-            investment_horizon = user_risk_profile.get('investment_horizon', 5)
-
-            # Adjust risk level based on user profile
-            if user_risk_score < 30 or age > 65 or investment_horizon < 3:
-                adjusted_risk_level = "conservative"
-            elif user_risk_score > 70 and age < 40 and investment_horizon > 10:
-                adjusted_risk_level = "aggressive"
-
-        error_fallback_data = {
-            "success": True,  # Return success with fallback weights
-            "current_weights": current_weights,
-            "target_weights": equal_weights,
-            "weights": equal_weights,  # For backward compatibility
-            "risk_level": adjusted_risk_level,
-            "original_risk_level": risk_level,
-            "market_data_available": False,
-            "optimization_method": "equal_weight_error_fallback",
-            "risk_profile_analysis": {
-                "adjusted_risk_level": adjusted_risk_level,
-                "adjustment_reason": "Error fallback - using original risk level"
-            },
+        return {
+            "success": False,
             "error": str(e),
-            "guidance": f"Optimization failed. Using equal weight allocation as fallback for {adjusted_risk_level} profile."
+            "market_data_available": False
         }
-        return _sanitize_float_values(error_fallback_data)
 
 
-def _fallback_mpt_optimization(expected_returns: pd.Series, cov_matrix: pd.DataFrame, symbols: List[str], risk_level: str, risk_free_rate: float) -> Dict[str, float]:
-    """Fallback MPT optimization when LLM is unavailable"""
+def _dynamic_mpt_optimization(expected_returns: pd.Series, cov_matrix: pd.DataFrame, symbols: List[str], risk_level: str, risk_free_rate: float) -> Dict[str, float]:
+    """Dynamic MPT optimization based on risk level and market data"""
     if risk_level == "conservative":
         return _minimize_volatility(expected_returns, cov_matrix, symbols)
     elif risk_level == "aggressive":
@@ -831,38 +761,6 @@ def _fallback_mpt_optimization(expected_returns: pd.Series, cov_matrix: pd.DataF
         return _maximize_sharpe_ratio(expected_returns, cov_matrix, symbols, risk_free_rate)
 
 
-def _simple_portfolio_optimization(current_weights: Dict[str, float], risk_level: str) -> Dict[str, Any]:
-    """Fallback simple optimization when market data is not available"""
-    symbols = list(current_weights.keys())
-    n_assets = len(symbols)
-    
-    if risk_level == "conservative":
-        # Equal weight with slight bias to first asset
-        weights = {symbol: 1.0 / n_assets for symbol in symbols}
-        first_symbol = symbols[0]
-        weights[first_symbol] += 0.1
-        total = sum(weights.values())
-        weights = {k: v/total for k, v in weights.items()}
-    elif risk_level == "aggressive":
-        # Concentrated portfolio
-        weights = {symbol: 0.1 for symbol in symbols}
-        if n_assets >= 2:
-            weights[symbols[0]] = 0.4
-            weights[symbols[1]] = 0.2
-        else:
-            weights[symbols[0]] = 0.7
-        total = sum(weights.values())
-        weights = {k: v/total for k, v in weights.items()}
-    else:  # moderate
-        weights = {symbol: 1.0 / n_assets for symbol in symbols}
-    
-    return {
-        "success": True,
-        "method": f"simple_{risk_level}",
-        "weights": weights,
-        "total_weight": sum(weights.values()),
-        "risk_level": risk_level
-    }
 
 
 def _minimize_volatility(expected_returns: pd.Series, cov_matrix: pd.DataFrame, symbols: List[str]) -> Dict[str, float]:
@@ -1373,7 +1271,7 @@ def rebalancing_engine_tool(portfolio_id: int, current_weights: Dict[str, float]
 
 def get_live_prices_tool(symbols: List[str]) -> Dict[str, Any]:
     """
-    Get live prices for given symbols
+    Get live prices for given symbols using Polygon.io API
     
     Args:
         symbols: List of asset symbols
@@ -1382,20 +1280,38 @@ def get_live_prices_tool(symbols: List[str]) -> Dict[str, Any]:
         Dict containing live price data
     """
     try:
-        import yfinance as yf
-        
         live_data = {}
         for symbol in symbols:
             try:
-                ticker = yf.Ticker(symbol)
-                info = ticker.info
-                live_data[symbol] = {
-                    "price": info.get("currentPrice", info.get("regularMarketPrice")),
-                    "change": info.get("regularMarketChange"),
-                    "change_percent": info.get("regularMarketChangePercent"),
-                    "volume": info.get("volume"),
-                    "market_cap": info.get("marketCap")
-                }
+                # Try Polygon.io for live data
+                try:
+                    _check_rate_limit()
+                    
+                    # Get recent data (last 5 days) to get current price
+                    end_date = datetime.now()
+                    start_date = end_date - timedelta(days=5)
+                    
+                    df = _fetch_polygon_aggregates(symbol, 5)
+                    if df is not None and not df.empty:
+                        latest_price = df['Close'].iloc[-1]
+                        prev_price = df['Close'].iloc[-2] if len(df) > 1 else latest_price
+                        change = latest_price - prev_price
+                        change_percent = (change / prev_price) * 100 if prev_price != 0 else 0
+                        
+                        live_data[symbol] = {
+                            "price": float(latest_price),
+                            "change": float(change),
+                            "change_percent": float(change_percent),
+                            "volume": float(df['Volume'].iloc[-1]) if 'Volume' in df.columns else 0,
+                            "data_source": "polygon"
+                        }
+                        continue
+                except Exception as e:
+                    logging.warning(f"Polygon.io failed for {symbol}: {e}")
+                
+                # If Polygon.io fails, return error
+                live_data[symbol] = {"error": f"No live data available for {symbol} from Polygon.io"}
+                
             except Exception as e:
                 logging.error(f"Error getting live price for {symbol}: {e}")
                 live_data[symbol] = {"error": str(e)}
@@ -1403,7 +1319,7 @@ def get_live_prices_tool(symbols: List[str]) -> Dict[str, Any]:
         return {
             "success": True,
             "live_prices": live_data,
-            "timestamp": pd.Timestamp.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         return {
@@ -1414,7 +1330,90 @@ def get_live_prices_tool(symbols: List[str]) -> Dict[str, Any]:
 
 
 # ============================================================================
-# CrewAI Tool Wrappers - Create Tool objects for CrewAI agent compatibility
+# CrewAI Tool Wrappers - Create wrapper functions first
+# ============================================================================
+
+def fetch_market_data_tool_wrapper(symbols: str, days: int = 365) -> str:
+    """Fetch historical market data for symbols (comma-separated)"""
+    symbol_list = [s.strip() for s in symbols.split(',')]
+    result = fetch_market_data_tool(symbol_list, days)
+    return json.dumps(result)
+
+def calculate_indicators_tool_wrapper(symbol: str, data: str) -> str:
+    """Calculate technical indicators for a symbol's data"""
+    try:
+        data_list = json.loads(data) if isinstance(data, str) else data
+        result = calculate_indicators_tool(symbol, data_list)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+def portfolio_optimizer_tool_wrapper(current_weights: str, risk_level: str, market_data: str, user_risk_profile: str = "{}") -> str:
+    """Optimize portfolio allocation based on risk level and market data"""
+    try:
+        current_weights_dict = json.loads(current_weights) if isinstance(current_weights, str) else current_weights
+        market_data_dict = json.loads(market_data) if isinstance(market_data, str) else market_data
+        user_profile_dict = json.loads(user_risk_profile) if isinstance(user_risk_profile, str) else user_risk_profile
+        
+        result = portfolio_optimizer_tool(current_weights_dict, risk_level, market_data_dict, user_profile_dict)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+def market_regime_detector_tool_wrapper(market_data: str) -> str:
+    """Detect current market regime based on technical indicators"""
+    try:
+        market_data_dict = json.loads(market_data) if isinstance(market_data, str) else market_data
+        result = market_regime_detector_tool(market_data_dict)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+def risk_calculator_tool_wrapper(portfolio_data: str, user_risk_profile: str = "{}", market_data: str = "{}") -> str:
+    """Calculate comprehensive portfolio risk metrics"""
+    try:
+        portfolio_dict = json.loads(portfolio_data) if isinstance(portfolio_data, str) else portfolio_data
+        user_profile_dict = json.loads(user_risk_profile) if isinstance(user_risk_profile, str) else user_risk_profile
+        market_data_dict = json.loads(market_data) if isinstance(market_data, str) else market_data
+        
+        result = risk_calculator_tool(portfolio_dict, user_profile_dict, market_data_dict)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+def suggest_diversification_assets_tool_wrapper(current_portfolio: str, market_data: str = "{}") -> str:
+    """Suggest diversification assets based on sector analysis"""
+    try:
+        portfolio_dict = json.loads(current_portfolio) if isinstance(current_portfolio, str) else current_portfolio
+        market_data_dict = json.loads(market_data) if isinstance(market_data, str) else market_data
+        
+        result = suggest_diversification_assets_tool(portfolio_dict, market_data_dict)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+def rebalancing_engine_tool_wrapper(portfolio_id: int, current_weights: str, target_weights: str) -> str:
+    """Execute portfolio rebalancing by calculating optimal trades"""
+    try:
+        current_weights_dict = json.loads(current_weights) if isinstance(current_weights, str) else current_weights
+        target_weights_dict = json.loads(target_weights) if isinstance(target_weights, str) else target_weights
+        
+        result = rebalancing_engine_tool(portfolio_id, current_weights_dict, target_weights_dict)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+def get_live_prices_tool_wrapper(symbols: str) -> str:
+    """Get current market prices for a list of symbols"""
+    try:
+        symbol_list = [s.strip() for s in symbols.split(',')]
+        result = get_live_prices_tool(symbol_list)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+# ============================================================================
+# CrewAI Tool Objects - Create Tool objects for CrewAI agent compatibility
 # ============================================================================
 
 def _create_tool(name: str, description: str, func: callable) -> Optional[Any]:
@@ -1431,85 +1430,53 @@ def _create_tool(name: str, description: str, func: callable) -> Optional[Any]:
         logging.warning(f"Failed to create CrewAI tool '{name}': {e}")
         return None
 
+# Create Tool objects for data collection
+FETCH_MARKET_DATA_CREW_TOOL = _create_tool(
+    name="fetch_market_data",
+    description="Fetch historical market data and technical indicators for given symbols using Polygon.io API. Returns price history, SMA, RSI, and volume data.",
+    func=fetch_market_data_tool_wrapper
+)
 
-# Create Tool objects for data collection (with error handling)
-try:
-    FETCH_MARKET_DATA_CREW_TOOL = _create_tool(
-        name="fetch_market_data",
-        description="Fetch historical market data and technical indicators for given symbols using yfinance. Returns price history, SMA, RSI, and volume data.",
-        func=fetch_market_data_tool
-    )
-except Exception as e:
-    logging.warning(f"Failed to create FETCH_MARKET_DATA_CREW_TOOL: {e}")
-    FETCH_MARKET_DATA_CREW_TOOL = None
+CALCULATE_INDICATORS_CREW_TOOL = _create_tool(
+    name="calculate_indicators",
+    description="Calculate technical indicators (SMA, RSI) for a given symbol's OHLCV data.",
+    func=calculate_indicators_tool_wrapper
+)
 
-try:
-    CALCULATE_INDICATORS_CREW_TOOL = _create_tool(
-        name="calculate_indicators",
-        description="Calculate technical indicators (SMA, RSI) for a given symbol's OHLCV data.",
-        func=calculate_indicators_tool
-    )
-except Exception as e:
-    logging.warning(f"Failed to create CALCULATE_INDICATORS_CREW_TOOL: {e}")
-    CALCULATE_INDICATORS_CREW_TOOL = None
+# Create Tool objects for portfolio strategy
+PORTFOLIO_OPTIMIZER_CREW_TOOL = _create_tool(
+    name="portfolio_optimizer",
+    description="Optimize portfolio allocation based on risk level, market data, and user risk profile using Modern Portfolio Theory.",
+    func=portfolio_optimizer_tool_wrapper
+)
 
-# Create Tool objects for portfolio strategy (with error handling)
-try:
-    PORTFOLIO_OPTIMIZER_CREW_TOOL = _create_tool(
-        name="portfolio_optimizer",
-        description="Optimize portfolio allocation based on risk level, market data, and user risk profile using Modern Portfolio Theory.",
-        func=portfolio_optimizer_tool
-    )
-except Exception as e:
-    logging.warning(f"Failed to create PORTFOLIO_OPTIMIZER_CREW_TOOL: {e}")
-    PORTFOLIO_OPTIMIZER_CREW_TOOL = None
+MARKET_REGIME_DETECTOR_CREW_TOOL = _create_tool(
+    name="market_regime_detector",
+    description="Detect current market regime (bull, bear, stable, volatile) based on technical indicators.",
+    func=market_regime_detector_tool_wrapper
+)
 
-try:
-    MARKET_REGIME_DETECTOR_CREW_TOOL = _create_tool(
-        name="market_regime_detector",
-        description="Detect current market regime (bull, bear, stable, volatile) based on technical indicators.",
-        func=market_regime_detector_tool
-    )
-except Exception as e:
-    logging.warning(f"Failed to create MARKET_REGIME_DETECTOR_CREW_TOOL: {e}")
-    MARKET_REGIME_DETECTOR_CREW_TOOL = None
+RISK_CALCULATOR_CREW_TOOL = _create_tool(
+    name="risk_calculator",
+    description="Calculate comprehensive portfolio risk metrics including volatility, concentration risk, diversification score, and Sharpe ratio.",
+    func=risk_calculator_tool_wrapper
+)
 
-try:
-    RISK_CALCULATOR_CREW_TOOL = _create_tool(
-        name="risk_calculator",
-        description="Calculate comprehensive portfolio risk metrics including volatility, concentration risk, diversification score, and Sharpe ratio.",
-        func=risk_calculator_tool
-    )
-except Exception as e:
-    logging.warning(f"Failed to create RISK_CALCULATOR_CREW_TOOL: {e}")
-    RISK_CALCULATOR_CREW_TOOL = None
+DIVERSIFICATION_ASSETS_CREW_TOOL = _create_tool(
+    name="suggest_diversification",
+    description="Suggest diversification assets based on sector analysis and current portfolio composition.",
+    func=suggest_diversification_assets_tool_wrapper
+)
 
-try:
-    DIVERSIFICATION_ASSETS_CREW_TOOL = _create_tool(
-        name="suggest_diversification",
-        description="Suggest diversification assets based on sector analysis and current portfolio composition.",
-        func=suggest_diversification_assets_tool
-    )
-except Exception as e:
-    logging.warning(f"Failed to create DIVERSIFICATION_ASSETS_CREW_TOOL: {e}")
-    DIVERSIFICATION_ASSETS_CREW_TOOL = None
+REBALANCING_ENGINE_CREW_TOOL = _create_tool(
+    name="rebalancing_engine",
+    description="Execute portfolio rebalancing by calculating optimal trades and generating execution orders.",
+    func=rebalancing_engine_tool_wrapper
+)
 
-try:
-    REBALANCING_ENGINE_CREW_TOOL = _create_tool(
-        name="rebalancing_engine",
-        description="Execute portfolio rebalancing by calculating optimal trades and generating execution orders.",
-        func=rebalancing_engine_tool
-    )
-except Exception as e:
-    logging.warning(f"Failed to create REBALANCING_ENGINE_CREW_TOOL: {e}")
-    REBALANCING_ENGINE_CREW_TOOL = None
+GET_LIVE_PRICES_CREW_TOOL = _create_tool(
+    name="get_live_prices",
+    description="Get current market prices and trading data for a list of symbols.",
+    func=get_live_prices_tool_wrapper
+)
 
-try:
-    GET_LIVE_PRICES_CREW_TOOL = _create_tool(
-        name="get_live_prices",
-        description="Get current market prices and trading data for a list of symbols.",
-        func=get_live_prices_tool
-    )
-except Exception as e:
-    logging.warning(f"Failed to create GET_LIVE_PRICES_CREW_TOOL: {e}")
-    GET_LIVE_PRICES_CREW_TOOL = None
