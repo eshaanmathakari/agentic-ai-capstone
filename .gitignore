@@ -19,18 +19,29 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-/files
+MANIFEST
+
 # Virtual Environment
 venv/
 env/
 ENV/
-.venv
-/data
-# Environment variables
+env.bak/
+venv.bak/
+
+# Environment Variables
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# IDEs
+# Database
+*.db
+*.sqlite
+*.sqlite3
+portfolio_agent.db
+
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -39,53 +50,37 @@ ENV/
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-/ml-training/.
 
 # Logs
 *.log
 logs/
 
-# ML Models
-*.pkl
-*.h5
-*.pt
-*.pth
-*.onnx
-ml-training/models/*
-!ml-training/models/.gitkeep
+# Jupyter Notebook
+.ipynb_checkpoints
 
-# Data
-ml-training/data/*
-!ml-training/data/.gitkeep
-*.csv
-*.parquet
+# pyenv
+.python-version
 
-# Node
-node_modules/
-.next/
-out/
-.cache/
-
-# Build
-frontend/build/
-frontend/.next/
-frontend/out/
+# Streamlit
+.streamlit/
 
 # Testing
-.pytest_cache/
 .coverage
-htmlcov/
-coverage/
+.pytest_cache/
+.tox/
+.nox/
 
-# Docker
-*.tar
+# Documentation
+docs/_build/
 
-# Misc
-.DS_Store
-*.pem
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/

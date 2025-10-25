@@ -1,348 +1,210 @@
-# 🤖 AI Portfolio Rebalancer
+# 🤖 AI Portfolio Rebalancing Agent
 
-An intelligent portfolio management system powered by agentic AI that provides automated rebalancing recommendations using multi-agent workflows.
+A sophisticated multi-agent AI system for intelligent portfolio management and rebalancing using CrewAI framework, modern portfolio theory, and real-time market data.
 
 ## ✨ Features
 
-### 🧠 Agentic AI Architecture
-- **Data Agent**: Fetches and processes market data using yfinance
-- **Strategy Agent**: Generates optimization recommendations using OpenAI
-- **Validation Agent**: Ensures compliance and validates recommendations
-- **Orchestrator**: Coordinates the multi-agent workflow
+### 🧠 Multi-Agent AI System
+- **Data Agent**: Real-time market data collection and technical analysis
+- **Strategy Agent**: Advanced portfolio optimization using Modern Portfolio Theory (MPT)
+- **Validation Agent**: Risk assessment and compliance validation
+- **Orchestrator**: Intelligent coordination of all agents
 
 ### 📊 Portfolio Management
-- **CSV Import**: Upload portfolios via CSV files
-- **Real-time Data**: Live market prices and technical indicators
-- **Risk Profiling**: 3-question simplified risk assessment
-- **Portfolio Analytics**: Comprehensive performance metrics
+- **Real-time Market Data**: Yahoo Finance integration for reliable data
+- **Portfolio Optimization**: MPT-based asset allocation with risk constraints
+- **Risk Profiling**: User-specific risk assessment and management
+- **Performance Analytics**: Comprehensive portfolio metrics and analysis
+- **Rebalancing Suggestions**: AI-powered portfolio rebalancing recommendations
 
-### ⚖️ Rebalancing Engine
-- **Smart Triggers**: Threshold-based and regime-aware rebalancing
-- **Multiple Strategies**: Conservative, Moderate, and Aggressive approaches
-- **Explainable AI**: Clear reasoning for every recommendation
-- **Transaction Cost Analysis**: Cost-benefit evaluation
-
-### 🎨 Modern UI
-- **Streamlit Frontend**: Clean, responsive interface
-- **Interactive Dashboards**: Real-time portfolio visualization
-- **CSV Upload**: Drag-and-drop portfolio import
-- **Risk Assessment**: Simple 3-question questionnaire
+### 🎯 Key Capabilities
+- **Dynamic Risk Assessment**: Personalized risk profiling based on user preferences
+- **Market Regime Detection**: Intelligent market condition analysis
+- **Transaction Cost Optimization**: Cost-aware rebalancing strategies
+- **Diversification Analysis**: Sector and asset class diversification insights
+- **Stress Testing**: Portfolio resilience under various market scenarios
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.11+
-- Docker & Docker Compose (recommended)
-- OpenAI API key
+- OpenAI API key (for AI agents)
+- Yahoo Finance access (no API key required)
 
-### 1. Clone and Setup
+### Installation
+
+1. **Clone the repository**
 ```bash
-git clone https://github.com/eshaanmathakari/agentic-ai-capstone.git
-cd agentic-ai-capstone
-
-# Copy environment file
-cp .env.example .env
-# Edit .env with your API keys
+git clone https://github.com/yourusername/ai-portfolio-rebalancing-agent.git
+cd ai-portfolio-rebalancing-agent
 ```
 
-### 2. Environment Configuration
-Create `.env` file:
+2. **Create virtual environment**
 ```bash
-DATABASE_URL=sqlite:///./portfolio_agent.db
-SECRET_KEY=dev-secret-key-change-in-prod
-OPENAI_API_KEY=your-openai-key-here
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
-DEBUG=True
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-### 3. Install Dependencies
+3. **Install dependencies**
 ```bash
-# Backend
+pip install -r backend/requirements.txt
+```
+
+4. **Set up environment variables**
+```bash
+# Create .env file in project root
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+5. **Initialize database**
+```bash
 cd backend
-pip install -r requirements.txt
-
-# Streamlit (if running separately)
-pip install streamlit plotly
+python -c "from database.connection import init_db; init_db()"
 ```
 
-### 4. Run the Application
+### Running the Application
 
-#### Option A: Docker Compose (Recommended)
+**Terminal 1 - Backend API:**
 ```bash
-# Start all services
-docker-compose up -d
-
-# Backend API: http://localhost:8000
-# Streamlit UI: http://localhost:8501
-# API Docs: http://localhost:8000/docs
-```
-
-#### Option B: Manual Setup
-```bash
-# Terminal 1: Backend
 cd backend
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Terminal 2: Streamlit
-cd streamlit_app
-streamlit run app.py --server.port 8501
+source ../venv/bin/activate
+python -c "
+import uvicorn
+from api.main import app
+print('🚀 Starting AI Portfolio Rebalancing Agent Backend...')
+print('🌐 Server: http://localhost:8000')
+print('📚 API Docs: http://localhost:8000/docs')
+uvicorn.run(app, host='0.0.0.0', port=8000, log_level='info')
+"
 ```
 
-## 📁 Project Structure
-
+**Terminal 2 - Frontend:**
+```bash
+source venv/bin/activate
+streamlit run streamlit_app/app.py
 ```
-agentic-ai-capstone/
-├── backend/                    # FastAPI backend
-│   ├── agents/                # AI agents
-│   │   ├── base_agent.py      # Base agent class
-│   │   ├── data_agent.py      # Market data agent
-│   │   ├── strategy_agent.py  # Strategy agent
-│   │   ├── validation_agent.py # Validation agent
-│   │   ├── orchestrator.py    # Workflow orchestrator
-│   │   └── tools.py          # Agent tools
-│   ├── api/                   # API routes
-│   │   ├── main.py           # FastAPI app
-│   │   └── routes/           # API endpoints
-│   ├── database/             # Database models
-│   ├── ml_models/            # ML models
-│   ├── risk_engine/          # Risk calculations
-│   └── strategy_engine/      # Rebalancing logic
-├── streamlit_app/            # Streamlit frontend
-│   ├── app.py               # Main Streamlit app
-│   ├── pages/               # App pages
-│   └── utils/               # Utilities
-├── deployment/              # AWS deployment
-├── sample_portfolio.csv    # Sample data
-├── docker-compose.yml       # Local development
-├── Dockerfile              # Container definition
-└── README.md               # This file
+
+## 🌐 Access Points
+
+- **Frontend Application**: http://localhost:8501
+- **Backend API**: http://localhost:8000
+- **API Documentation**: http://localhost:8000/docs
+
+## 🏗️ Architecture
+
+### Backend (FastAPI)
+```
+backend/
+├── agents/           # CrewAI multi-agent system
+│   ├── data_agent.py      # Market data specialist
+│   ├── strategy_agent.py  # Portfolio optimization
+│   ├── validation_agent.py # Risk & compliance
+│   └── orchestrator.py    # Agent coordination
+├── api/              # REST API endpoints
+│   └── routes/       # API route handlers
+├── database/         # Data models and connections
+└── utils/           # Shared utilities
+```
+
+### Frontend (Streamlit)
+```
+streamlit_app/
+├── app.py           # Main application
+└── utils/
+    └── api_client.py # Backend API integration
 ```
 
 ## 🔧 API Endpoints
 
 ### Authentication
-- `POST /api/auth/register` - Register new user
-- `POST /api/auth/login` - Login and get JWT token
-- `GET /api/auth/me` - Get current user info
+- `POST /api/auth/register` - User registration
+- `POST /api/auth/login` - User login
+- `GET /api/auth/me` - Get current user
 
 ### Portfolio Management
-- `GET /api/portfolio/` - List portfolios
-- `POST /api/portfolio/` - Create portfolio
-- `POST /api/portfolio/upload-csv` - Upload CSV portfolio
+- `GET /api/portfolio/` - List user portfolios
+- `POST /api/portfolio/` - Create new portfolio
 - `GET /api/portfolio/{id}` - Get portfolio details
-- `GET /api/portfolio/{id}/holdings` - Get holdings
+- `PUT /api/portfolio/{id}` - Update portfolio
 
-### Risk Profile
-- `GET /api/risk-profile/` - Get risk profile
-- `POST /api/risk-profile/` - Create/update profile
-- `GET /api/risk-profile/questionnaire` - Get 3-question form
+### Risk Profiling
+- `GET /api/risk-profile/` - Get user risk profile
+- `POST /api/risk-profile/` - Create risk profile
+- `PUT /api/risk-profile/` - Update risk profile
 
-### Rebalancing
-- `GET /api/rebalancing/{portfolio_id}/suggestions` - Get suggestions
-- `POST /api/rebalancing/{portfolio_id}/generate` - Generate AI analysis
-- `PATCH /api/rebalancing/suggestions/{id}/approve` - Approve suggestion
+### AI Analysis
+- `POST /api/rebalancing/{portfolio_id}/generate` - Generate AI rebalancing suggestions
+- `GET /api/rebalancing/{portfolio_id}/suggestions` - Get rebalancing suggestions
 
 ### Analytics
-- `GET /api/analytics/{portfolio_id}/performance` - Performance metrics
+- `GET /api/analytics/{portfolio_id}` - Portfolio analytics
 - `GET /api/analytics/{portfolio_id}/risk` - Risk metrics
+- `GET /api/analytics/{portfolio_id}/stress-test` - Stress testing
 
-## 📊 CSV Format
+## 🧪 Usage Example
 
-Upload portfolios using CSV files with the following format:
+1. **Register and Login**: Create your account
+2. **Create Portfolio**: Add your holdings and initial allocation
+3. **Complete Risk Profile**: Answer risk assessment questions
+4. **Generate AI Analysis**: Get intelligent rebalancing recommendations
+5. **Review Suggestions**: Analyze AI-powered portfolio optimization
 
-```csv
-symbol,quantity,purchase_price
-AAPL,10,150.00
-GOOGL,5,120.00
-MSFT,15,300.00
-TSLA,8,200.00
-NVDA,12,400.00
-```
+## 🔒 Security Features
 
-**Required columns:**
-- `symbol`: Stock symbol (e.g., AAPL, GOOGL)
-- `quantity`: Number of shares
-- `purchase_price`: Price per share when purchased
+- **JWT Authentication**: Secure user sessions
+- **Password Hashing**: bcrypt password encryption
+- **Input Validation**: Pydantic data validation
+- **SQL Injection Protection**: SQLAlchemy ORM protection
 
-## 🧠 AI Agent Workflow
+## 📈 Performance Features
 
-### 1. Data Collection
-- Fetches historical market data (365 days)
-- Calculates technical indicators (RSI, SMA)
-- Gets live prices and market info
-- Validates data quality
+- **Real-time Data**: Live market data integration
+- **Caching**: Intelligent data caching for performance
+- **Rate Limiting**: API rate limiting and optimization
+- **Error Handling**: Comprehensive error management
 
-### 2. Strategy Analysis
-- Analyzes current portfolio allocation
-- Applies risk-based optimization
-- Detects market regime (bull/bear/volatile/stable)
-- Generates target allocation
+## 🛠️ Technology Stack
 
-### 3. Validation
-- Checks portfolio constraints
-- Calculates transaction costs
-- Validates compliance rules
-- Stores recommendations
+### Backend
+- **FastAPI**: Modern Python web framework
+- **CrewAI**: Multi-agent AI framework
+- **SQLAlchemy**: Database ORM
+- **Pydantic**: Data validation
+- **yfinance**: Market data integration
 
-### 4. Orchestration
-- Coordinates agent workflow
-- Handles error recovery
-- Compiles final results
-- Provides explanations
+### Frontend
+- **Streamlit**: Interactive web application
+- **Plotly**: Data visualization
+- **Pandas**: Data manipulation
 
-## 🎯 Risk Assessment
+### AI/ML
+- **OpenAI GPT-4**: Language models for agents
+- **Modern Portfolio Theory**: Mathematical optimization
+- **Technical Analysis**: Market indicators and signals
 
-Simple 3-question risk profile:
+## 📝 License
 
-1. **Investment Horizon**: 1-3 years, 3-7 years, 7+ years
-2. **Loss Tolerance**: 0-10 scale (0 = no loss, 10 = high risk)
-3. **Experience Level**: Beginner, Intermediate, Advanced
-
-**Risk Levels:**
-- **Conservative**: Low risk, stable returns
-- **Moderate**: Balanced risk-return
-- **Aggressive**: Higher risk, growth focus
-
-## 🚀 AWS Deployment
-
-### Prerequisites
-- AWS CLI configured
-- Docker installed
-- Domain name (optional)
-
-### Deploy to AWS
-```bash
-# Make deployment script executable
-chmod +x deployment/deploy.sh
-
-# Deploy to AWS ECS
-./deployment/deploy.sh
-```
-
-### Infrastructure
-- **ECS Fargate**: Container orchestration
-- **Application Load Balancer**: Traffic routing
-- **RDS PostgreSQL**: Database
-- **ElastiCache Redis**: Caching
-- **ECR**: Container registry
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed setup instructions.
-
-## 🧪 Testing
-
-### Sample Data
-Use the provided `sample_portfolio.csv` for testing:
-
-```bash
-# Upload sample portfolio
-curl -X POST "http://localhost:8000/api/portfolio/upload-csv" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -F "file=@sample_portfolio.csv" \
-  -F "portfolio_name=Test Portfolio"
-```
-
-### Test Workflow
-1. Register/Login user
-2. Complete risk profile questionnaire
-3. Upload CSV portfolio
-4. Generate AI rebalancing analysis
-5. Review recommendations
-6. Approve/reject suggestions
-
-## 🔍 Monitoring
-
-### Health Checks
-- Backend: `GET /health`
-- Database connectivity
-- Redis connectivity
-- Agent workflow status
-
-### Logging
-- Application logs via CloudWatch
-- Agent action logging
-- Error tracking and alerts
-
-## 🛠️ Development
-
-### Local Development
-```bash
-# Start backend
-cd backend
-uvicorn api.main:app --reload
-
-# Start Streamlit
-cd streamlit_app
-streamlit run app.py
-```
-
-### Code Structure
-- **Agents**: Modular AI components
-- **API**: RESTful endpoints
-- **Database**: SQLAlchemy models
-- **Frontend**: Streamlit pages
-
-### Adding New Features
-1. Create agent tools in `backend/agents/tools.py`
-2. Add API endpoints in `backend/api/routes/`
-3. Update Streamlit pages in `streamlit_app/pages/`
-4. Test with sample data
-
-## 📈 Performance
-
-### Benchmarks
-- **Portfolio Optimization**: <1s for <20 assets
-- **Risk Calculations**: 1-2s for typical portfolio
-- **AI Analysis**: 3-5s end-to-end
-- **CSV Upload**: 2-10s depending on symbols
-
-### Optimization
-- Caching with Redis
-- Database connection pooling
-- Async processing
-- Efficient data structures
-
-## 🔒 Security
-
-### Authentication
-- JWT-based authentication
-- Password hashing with bcrypt
-- Token expiration
-- Secure session management
-
-### Data Protection
-- Environment variable configuration
-- Database encryption
-- HTTPS enforcement
-- Input validation
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create feature branch
-3. Make changes
-4. Add tests
-5. Submit pull request
-
-## 📄 License
-
-MIT License - See LICENSE file for details
-
-## 🙏 Acknowledgments
-
-- **CrewAI**: Agent orchestration framework
-- **FastAPI**: Modern web framework
-- **Streamlit**: Rapid UI development
-- **yfinance**: Market data integration
-- **OpenAI**: LLM capabilities
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## 📞 Support
 
-For issues or questions:
-1. Check the documentation
-2. Review CloudWatch logs
-3. Create GitHub issue
-4. Contact development team
+For questions and support, please open an issue on GitHub.
+
+## 🙏 Acknowledgments
+
+- CrewAI framework for multi-agent AI capabilities
+- Yahoo Finance for reliable market data
+- OpenAI for advanced language models
+- Modern Portfolio Theory for mathematical optimization
 
 ---
 
-**Built with ❤️ using Python, FastAPI, Streamlit, and CrewAI**
+**Built with ❤️ for intelligent portfolio management**

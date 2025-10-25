@@ -1,0 +1,8 @@
+Symbol,Company,Sector,Shares,Average_Buy_Price,Current_Price,Market_Value,Unrealized_PnL
+META,Meta Platforms Inc.,Communication Services,37,386.61,312.17,11550.29,-2754.28
+NVDA,NVIDIA Corp.,Technology,107,164.83,191.7,20511.9,2875.09
+AAPL,Apple Inc.,Technology,25,165.18,183.65,4591.25,461.75
+GOOGL,Alphabet Inc.,Technology,193,426.51,352.87,68103.91,-14212.52
+NFLX,Netflix Inc.,Communication Services,188,120.87,140.75,26461.0,3737.44
+TSLA,Tesla Inc.,Consumer Discretionary,199,120.66,97.3,19362.7,-4648.64
+JPM,JPMorgan Chase & Co.,Financials,52,491.66,489.99,25479.48,-86.84

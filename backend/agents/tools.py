@@ -106,7 +106,7 @@ def _fetch_polygon_aggregates(symbol: str, days: int) -> Optional[pd.DataFrame]:
     """Fetch OHLCV bars from Polygon.io"""
     if not POLYGON_API_KEY:
         logging.warning("POLYGON_API_KEY not set - using fallback data")
-        return _create_fallback_data(symbol, days)
+        return None
     
     try:
         _check_rate_limit()
@@ -131,13 +131,13 @@ def _fetch_polygon_aggregates(symbol: str, days: int) -> Optional[pd.DataFrame]:
         
         if response.status_code != 200:
             logging.warning(f"Polygon.io API returned status {response.status_code} for {symbol}")
-            return _create_fallback_data(symbol, days)
+            return None
         
         data = response.json()
         
         if data.get('status') != 'OK' or not data.get('results'):
             logging.warning(f"No data returned for {symbol}: {data.get('message', 'Unknown error')}")
-            return _create_fallback_data(symbol, days)
+            return None
         
         # Convert to DataFrame
         results = data['results']
@@ -161,52 +161,14 @@ def _fetch_polygon_aggregates(symbol: str, days: int) -> Optional[pd.DataFrame]:
             return df
         else:
             logging.warning(f"Insufficient data for {symbol}: {len(df)} points")
-            return _create_fallback_data(symbol, days)
+            return None
             
     except Exception as e:
         logging.error(f"Polygon.io aggregates fetch failed for {symbol}: {e}")
-        return _create_fallback_data(symbol, days)
+        return None
 
 
-def _create_fallback_data(symbol: str, days: int) -> pd.DataFrame:
-    """Create fallback data when API fails"""
-    logging.info(f"Creating fallback data for {symbol}")
-    
-    # Create synthetic data for testing
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days)
-    
-    # Generate date range
-    dates = pd.date_range(start=start_date, end=end_date, freq='D')
-    
-    # Create synthetic price data (random walk)
-    np.random.seed(hash(symbol) % 2**32)  # Deterministic seed based on symbol
-    base_price = 100.0
-    returns = np.random.normal(0.001, 0.02, len(dates))  # 0.1% daily return, 2% volatility
-    prices = [base_price]
-    
-    for ret in returns[1:]:
-        prices.append(prices[-1] * (1 + ret))
-    
-    # Create OHLCV data
-    df_data = []
-    for i, (date, price) in enumerate(zip(dates, prices)):
-        high = price * (1 + abs(np.random.normal(0, 0.01)))
-        low = price * (1 - abs(np.random.normal(0, 0.01)))
-        volume = np.random.randint(1000000, 10000000)
-        
-        df_data.append({
-            'Date': date,
-            'Open': price,
-            'High': high,
-            'Low': low,
-            'Close': price,
-            'Volume': volume
-        })
-    
-    df = pd.DataFrame(df_data)
-    logging.info(f"Created {len(df)} fallback data points for {symbol}")
-    return df
+# Removed fallback data generation - system now requires real market data
 
 
 def _fetch_polygon_technical_indicators(symbol: str) -> Dict[str, float]:

@@ -244,55 +244,18 @@ class StrategyAgent(BaseAgent):
                                 "sharpe_improvement_display": f"{sharpe_improvement:+.2f}"
                             }
                         else:
-                            # Fallback when no market data available
-                            expected_improvements = {
-                                "expected_return": 0.08,  # 8% default
-                                "expected_volatility": 0.15,  # 15% default
-                                "sharpe_ratio": 0.4,  # Default Sharpe
-                                "return_improvement": 0.0,
-                                "volatility_improvement": 0.0,
-                                "sharpe_improvement": 0.0,
-                                "risk_reduction": 0.0,
-                                "expected_return_display": "8.0%",
-                                "expected_volatility_display": "15.0%",
-                                "sharpe_ratio_display": "0.40",
-                                "return_improvement_display": "0.0%",
-                                "volatility_improvement_display": "0.0%",
-                                "sharpe_improvement_display": "0.00"
+                            # No market data available - cannot provide accurate projections
+                            return {
+                                "success": False,
+                                "error": "Market data required for portfolio optimization",
+                                "market_data_available": False
                             }
-                    else:
-                        # No market data fallback
-                        expected_improvements = {
-                            "expected_return": 0.08,
-                            "expected_volatility": 0.15,
-                            "sharpe_ratio": 0.4,
-                            "return_improvement": 0.0,
-                            "volatility_improvement": 0.0,
-                            "sharpe_improvement": 0.0,
-                            "risk_reduction": 0.0,
-                            "expected_return_display": "8.0%",
-                            "expected_volatility_display": "15.0%",
-                            "sharpe_ratio_display": "0.40",
-                            "return_improvement_display": "0.0%",
-                            "volatility_improvement_display": "0.0%",
-                            "sharpe_improvement_display": "0.00"
-                        }
                 except Exception as e:
-                    logging.warning(f"Error calculating expected improvements: {e}")
-                    expected_improvements = {
-                        "expected_return": 0.08,
-                        "expected_volatility": 0.15,
-                        "sharpe_ratio": 0.4,
-                        "return_improvement": 0.0,
-                        "volatility_improvement": 0.0,
-                        "sharpe_improvement": 0.0,
-                        "risk_reduction": 0.0,
-                        "expected_return_display": "8.0%",
-                        "expected_volatility_display": "15.0%",
-                        "sharpe_ratio_display": "0.40",
-                        "return_improvement_display": "0.0%",
-                        "volatility_improvement_display": "0.0%",
-                        "sharpe_improvement_display": "0.00"
+                    logging.error(f"Error calculating expected improvements: {e}")
+                    return {
+                        "success": False,
+                        "error": f"Failed to calculate expected improvements: {str(e)}",
+                        "market_data_available": False
                     }
 
             # Create structured recommendations object with enhanced data

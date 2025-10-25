@@ -1,0 +1,9 @@
+Symbol,Company,Sector,Shares,Average_Buy_Price,Current_Price,Market_Value,Unrealized_PnL
+AAPL,Apple Inc.,Technology,15,207.21,202.71,3040.65,-67.5
+NFLX,Netflix Inc.,Communication Services,112,299.18,351.62,39381.44,5873.28
+AMZN,Amazon.com Inc.,Consumer Discretionary,109,474.45,509.81,55569.29,3854.24
+NVDA,NVIDIA Corp.,Technology,65,331.96,393.12,25552.8,3975.4
+MSFT,Microsoft Corp.,Technology,36,132.76,130.01,4680.36,-99.0
+GOOGL,Alphabet Inc.,Technology,182,138.64,155.97,28386.54,3154.06
+BRK.B,Berkshire Hathaway Inc.,Financials,15,382.94,451.83,6777.45,1033.35
+META,Meta Platforms Inc.,Communication Services,131,483.17,453.73,59438.63,-3856.64

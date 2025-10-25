@@ -10,34 +10,7 @@ from database import get_db, User, Portfolio, Holding
 from api.routes.auth import get_current_user
 
 
-def _calculate_fallback_risk_metrics(holdings: list[Holding]) -> Dict[str, float]:
-    """Calculate simple fallback risk metrics when market data is unavailable."""
-    values = [h.current_value or h.cost_basis or 0 for h in holdings]
-    total_value = sum(values)
-
-    if total_value <= 0:
-        return {
-            "sharpe_ratio": None,
-            "max_drawdown": None,
-            "volatility": None,
-            "beta": None,
-        }
-
-    n_assets = len(values)
-    max_weight = max(values) / total_value
-
-    # Simple heuristics
-    volatility_pct = round(10 + max_weight * 20, 2)  # 10% base volatility up to 30%
-    max_drawdown_pct = round(-volatility_pct * 1.2, 2)
-    sharpe_ratio = round(0.6 - max_weight * 0.4, 2)
-    beta = round(0.9 + max_weight * 0.4, 2)
-
-    return {
-        "sharpe_ratio": sharpe_ratio,
-        "max_drawdown": max_drawdown_pct,
-        "volatility": volatility_pct,
-        "beta": beta,
-    }
+# Removed fallback risk metrics - system now requires real market data
 
 router = APIRouter()
 
@@ -81,22 +54,18 @@ async def get_portfolio_performance(
             if value > 0:
                 weights[holding.asset_symbol] = value / total_value
     
-    fallback_metrics = _calculate_fallback_risk_metrics(holdings)
-    
     metrics = {
         "total_value": total_value,
         "top_holdings": sorted(weights.items(), key=lambda x: x[1], reverse=True)[:5],
-        "sharpe_ratio": fallback_metrics["sharpe_ratio"],
-        "max_drawdown": fallback_metrics["max_drawdown"],
-        "volatility": fallback_metrics["volatility"],
-        "beta": fallback_metrics["beta"],
-        "weights": weights
+        "weights": weights,
+        "holdings_count": len(holdings)
     }
     
     return {
         "portfolio_id": portfolio_id,
         "metrics": metrics,
-        "data_source": "fallback"
+        "data_source": "portfolio_only",
+        "note": "Advanced analytics require market data integration"
     }
 
 
@@ -129,22 +98,13 @@ async def get_portfolio_risk_metrics(
             "risk_metrics": {}
         }
     
-    # Get historical prices
-    fallback_metrics = _calculate_fallback_risk_metrics(holdings)
-    
     return {
         "portfolio_id": portfolio_id,
         "risk_metrics": {
-            "var_95": 0.0,
-            "var_99": 0.0,
-            "cvar_95": 0.0,
-            "cvar_99": 0.0,
-            "beta": fallback_metrics["beta"],
-            "alpha": 0.0,
-            "volatility": fallback_metrics["volatility"],
-            "max_drawdown": fallback_metrics["max_drawdown"],
-            "sharpe_ratio": fallback_metrics["sharpe_ratio"],
-            "data_source": "fallback"
+            "holdings_count": len(holdings),
+            "total_value": sum(h.current_value or h.cost_basis or 0 for h in holdings),
+            "data_source": "portfolio_only",
+            "note": "Advanced risk metrics require market data integration"
         }
     }
 
