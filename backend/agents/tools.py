@@ -18,7 +18,7 @@ import os
 # OpenAI integration
 try:
     from openai import OpenAI
-    from backend.config import get_settings
+    from config import get_settings
     settings = get_settings()
     openai_client = OpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
 except ImportError:
@@ -32,29 +32,29 @@ try:
         # GPT-5-mini for worker agents (data, strategy, validation)
         try:
             crewai_llm = LLM(
-                model="gpt-5-mini",  # Worker agents
-                api_key=settings.OPENAI_API_KEY,
-                temperature=0.7
+                model="gpt-4o-mini",  # Worker agents (using gpt-4o-mini instead of gpt-5-mini)
+                api_key=settings.OPENAI_API_KEY
+                # Removed temperature as it's not supported by this model
             )
             data_agent_llm = crewai_llm
             strategy_agent_llm = crewai_llm
             validation_agent_llm = crewai_llm
             CREWAI_AVAILABLE = True
-            logging.info("CrewAI initialized with gpt-5-mini for worker agents")
+            logging.info("CrewAI initialized with gpt-4o-mini for worker agents")
         except Exception as e:
-            logging.warning(f"GPT-5-mini not available: {e}")
+            logging.warning(f"GPT-4o-mini not available: {e}")
             crewai_llm = data_agent_llm = strategy_agent_llm = validation_agent_llm = None
             CREWAI_AVAILABLE = False
 
-        # GPT-5 for orchestrator (senior coordinator)
+        # GPT-4o for orchestrator (senior coordinator)
         try:
             orchestrator_llm = LLM(
-                model="gpt-5",  # Senior orchestrator
-                api_key=settings.OPENAI_API_KEY,
-                temperature=0.5  # More focused for coordination
+                model="gpt-4o",  # Senior orchestrator (using gpt-4o instead of gpt-5)
+                api_key=settings.OPENAI_API_KEY
+                # Removed temperature as it's not supported by this model
             )
         except Exception as e:
-            logging.warning(f"GPT-5 not available: {e}")
+            logging.warning(f"GPT-4o not available: {e}")
             orchestrator_llm = crewai_llm  # Fallback to worker LLM
     else:
         crewai_llm = data_agent_llm = strategy_agent_llm = validation_agent_llm = orchestrator_llm = None
@@ -66,14 +66,11 @@ except ImportError:
     logging.warning("CrewAI not available")
 
 # CrewAI Tool wrappers - convert functions to Tool objects for CrewAI compatibility
-try:
-    from crewai_tools import Tool, tool
-    CREWAI_TOOLS_AVAILABLE = True
-except ImportError:
-    CREWAI_TOOLS_AVAILABLE = False
-    logging.warning("crewai_tools not available - tools will be passed as functions")
-    Tool = None
-    tool = None
+# Note: crewai-tools 1.0.0 doesn't have Tool class or tool decorator
+# We'll use function-based tools instead
+CREWAI_TOOLS_AVAILABLE = False
+Tool = None
+tool = None
 
 from .utils import _sanitize_float_values
 
@@ -382,7 +379,7 @@ def _build_from_cache(cached_data: List) -> Dict[str, Any]:
 def _cache_market_data(db_session, symbol: str, fresh_data: Dict[str, Any]):
     """Cache fresh market data to database"""
     try:
-        from backend.database.models import CachedMarketData
+        from database.models import CachedMarketData
         
         # Clear existing cache for this symbol
         db_session.query(CachedMarketData).filter(
@@ -450,7 +447,7 @@ def fetch_market_data_tool(symbols: List[str], days: int = 365, db_session=None)
                 # Check cache first if db_session is available
                 if db_session:
                     try:
-                        from backend.database.models import CachedMarketData
+                        from database.models import CachedMarketData
                         
                         cached = db_session.query(CachedMarketData).filter(
                             CachedMarketData.symbol == symbol,
@@ -1419,7 +1416,8 @@ def get_live_prices_tool_wrapper(symbols: str) -> str:
 def _create_tool(name: str, description: str, func: callable) -> Optional[Any]:
     """Create a CrewAI Tool object if crewai_tools is available, otherwise return None"""
     if not CREWAI_TOOLS_AVAILABLE or Tool is None:
-        return None
+        # Return the function itself as a tool (function-based approach)
+        return func
     try:
         return Tool(
             name=name,
@@ -1428,7 +1426,7 @@ def _create_tool(name: str, description: str, func: callable) -> Optional[Any]:
         )
     except Exception as e:
         logging.warning(f"Failed to create CrewAI tool '{name}': {e}")
-        return None
+        return func
 
 # Create Tool objects for data collection
 FETCH_MARKET_DATA_CREW_TOOL = _create_tool(

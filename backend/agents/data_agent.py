@@ -31,13 +31,12 @@ def create_data_agent(llm=None) -> Agent:
     if crewai_llm and llm is None:
         llm = crewai_llm
 
-    # Use CrewAI Tool objects if available, otherwise use empty list
-    tools_list = [FETCH_MARKET_DATA_CREW_TOOL, CALCULATE_INDICATORS_CREW_TOOL]
-    tools_list = [t for t in tools_list if t is not None]
-
-    # If no valid tools available, use empty list (agents will work without tools)
-    if not tools_list:
-        tools_list = []
+    # Check if we have valid CrewAI tools (not functions)
+    tools_list = []
+    if FETCH_MARKET_DATA_CREW_TOOL is not None and not callable(FETCH_MARKET_DATA_CREW_TOOL):
+        tools_list.append(FETCH_MARKET_DATA_CREW_TOOL)
+    if CALCULATE_INDICATORS_CREW_TOOL is not None and not callable(CALCULATE_INDICATORS_CREW_TOOL):
+        tools_list.append(CALCULATE_INDICATORS_CREW_TOOL)
 
     return Agent(
         role='Market Data Specialist',

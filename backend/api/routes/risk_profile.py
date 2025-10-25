@@ -5,8 +5,8 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from datetime import datetime
 
-from backend.database import get_db, User, RiskProfile, RiskLevel
-from backend.api.routes.auth import get_current_user
+from database import get_db, User, RiskProfile, RiskLevel
+from api.routes.auth import get_current_user
 
 router = APIRouter()
 

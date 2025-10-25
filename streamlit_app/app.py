@@ -697,48 +697,47 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
     if not risk_profile:
         st.warning("⚠️ No risk profile found. Please complete your risk assessment to get personalized AI analysis.")
         
-        if st.button("📝 Create Risk Profile"):
-            with st.expander("Risk Assessment Questionnaire", expanded=True):
-                st.write("Answer a few questions about your investment profile to enable AI-powered recommendations.")
+        with st.expander("📝 Create Risk Profile", expanded=True):
+            st.write("Answer a few questions about your investment profile to enable AI-powered recommendations.")
+            
+            with st.form("risk_profile_form"):
+                risk_tolerance = st.selectbox(
+                    "Risk Tolerance",
+                    ["Low Risk", "Medium Risk", "High Risk"],
+                    help="Choose your risk comfort level"
+                )
                 
-                with st.form("risk_profile_form"):
-                    risk_tolerance = st.selectbox(
-                        "Risk Tolerance",
-                        ["Low Risk", "Medium Risk", "High Risk"],
-                        help="Choose your risk comfort level"
-                    )
-                    
-                    investment_horizon = st.number_input(
-                        "Investment Horizon (years)",
-                        min_value=1,
-                        max_value=50,
-                        value=5,
-                        help="How many years can you invest before needing the money?"
-                    )
+                investment_horizon = st.number_input(
+                    "Investment Horizon (years)",
+                    min_value=1,
+                    max_value=50,
+                    value=5,
+                    help="How many years can you invest before needing the money?"
+                )
 
-                    if st.form_submit_button("Create Risk Profile"):
-                        profile_data = {
-                            "age": 30,  # Default age
-                            "investment_horizon": investment_horizon,
-                            "annual_income": 75000,  # Default income
-                            "net_worth": 150000,  # Default net worth
-                            "questionnaire_data": {
-                                "risk_tolerance": risk_tolerance,
-                                "investment_horizon": investment_horizon
-                            }
+                if st.form_submit_button("Create Risk Profile"):
+                    profile_data = {
+                        "age": 30,  # Default age
+                        "investment_horizon": investment_horizon,
+                        "annual_income": 75000,  # Default income
+                        "net_worth": 150000,  # Default net worth
+                        "questionnaire_data": {
+                            "risk_tolerance": risk_tolerance,
+                            "investment_horizon": investment_horizon
                         }
-                        
-                        response = api_client.create_or_update_risk_profile(profile_data)
-                        
-                        if response.get("success"):
-                            st.success("✅ Risk profile created successfully!")
-                            # Force immediate refresh
-                            st.session_state.risk_profile = None
-                            fetch_risk_profile()
-                            time.sleep(0.5)  # Brief delay for DB commit
-                            st.rerun()  # Reload page to show updated data
-                        else:
-                            st.error(f"Failed to create risk profile: {response.get('error', 'Unknown error')}")
+                    }
+                    
+                    response = api_client.create_or_update_risk_profile(profile_data)
+                    
+                    if response.get("success"):
+                        st.success("✅ Risk profile created successfully!")
+                        # Force immediate refresh
+                        st.session_state.risk_profile = None
+                        fetch_risk_profile()
+                        time.sleep(0.5)  # Brief delay for DB commit
+                        st.rerun()  # Reload page to show updated data
+                    else:
+                        st.error(f"Failed to create risk profile: {response.get('error', 'Unknown error')}")
         return
     
     # Get fresh risk profile data after potential updates

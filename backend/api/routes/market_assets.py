@@ -8,9 +8,9 @@ import pandas as pd
 import logging
 from datetime import datetime, timedelta
 
-from backend.database import get_db
-from backend.api.routes.auth import get_current_user
-from backend.database.models import User
+from database import get_db
+from api.routes.auth import get_current_user
+from database.models import User
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

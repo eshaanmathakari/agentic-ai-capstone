@@ -6,9 +6,9 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
 
-from backend.database import get_db, User, Portfolio, RebalancingSuggestion, RebalancingStatus, Holding, RiskProfile
-from backend.api.routes.auth import get_current_user
-from backend.agents.orchestrator import PortfolioOrchestrator
+from database import get_db, User, Portfolio, RebalancingSuggestion, RebalancingStatus, Holding, RiskProfile
+from api.routes.auth import get_current_user
+from agents.orchestrator import PortfolioOrchestrator
 
 router = APIRouter()
 

@@ -9,8 +9,8 @@ import yfinance as yf
 import io
 import re
 
-from backend.database import get_db, User, Portfolio, Holding
-from backend.api.routes.auth import get_current_user
+from database import get_db, User, Portfolio, Holding
+from api.routes.auth import get_current_user
 
 router = APIRouter()
 

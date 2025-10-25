@@ -36,13 +36,16 @@ def create_strategy_agent(llm=None) -> Agent:
     if crewai_llm and llm is None:
         llm = crewai_llm
 
-    # Use CrewAI Tool objects if available, otherwise use empty list
-    tools_list = [PORTFOLIO_OPTIMIZER_CREW_TOOL, MARKET_REGIME_DETECTOR_CREW_TOOL, RISK_CALCULATOR_CREW_TOOL, DIVERSIFICATION_ASSETS_CREW_TOOL]
-    tools_list = [t for t in tools_list if t is not None]
-
-    # If no valid tools available, use empty list (agents will work without tools)
-    if not tools_list:
-        tools_list = []
+    # Check if we have valid CrewAI tools (not functions)
+    tools_list = []
+    if PORTFOLIO_OPTIMIZER_CREW_TOOL is not None and not callable(PORTFOLIO_OPTIMIZER_CREW_TOOL):
+        tools_list.append(PORTFOLIO_OPTIMIZER_CREW_TOOL)
+    if MARKET_REGIME_DETECTOR_CREW_TOOL is not None and not callable(MARKET_REGIME_DETECTOR_CREW_TOOL):
+        tools_list.append(MARKET_REGIME_DETECTOR_CREW_TOOL)
+    if RISK_CALCULATOR_CREW_TOOL is not None and not callable(RISK_CALCULATOR_CREW_TOOL):
+        tools_list.append(RISK_CALCULATOR_CREW_TOOL)
+    if DIVERSIFICATION_ASSETS_CREW_TOOL is not None and not callable(DIVERSIFICATION_ASSETS_CREW_TOOL):
+        tools_list.append(DIVERSIFICATION_ASSETS_CREW_TOOL)
 
     return Agent(
         role='Chief Portfolio Strategist',

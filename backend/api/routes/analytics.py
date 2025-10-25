@@ -6,8 +6,8 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import pandas as pd
 
-from backend.database import get_db, User, Portfolio, Holding
-from backend.api.routes.auth import get_current_user
+from database import get_db, User, Portfolio, Holding
+from api.routes.auth import get_current_user
 
 
 def _calculate_fallback_risk_metrics(holdings: list[Holding]) -> Dict[str, float]:

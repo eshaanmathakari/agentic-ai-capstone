@@ -5,8 +5,8 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 
-from backend.database import get_db, User
-from backend.api.routes.auth import get_current_user
+from database import get_db, User
+from api.routes.auth import get_current_user
 # Simplified imports - using yfinance directly in tools
 
 router = APIRouter()

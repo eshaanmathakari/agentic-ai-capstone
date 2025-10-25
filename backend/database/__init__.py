@@ -10,6 +10,7 @@ from .models import (
     SentimentScore,
     PortfolioPerformance,
     UserAction,
+    CachedMarketData,
     RiskLevel,
     RebalancingStatus
 )
@@ -26,6 +27,7 @@ __all__ = [
     "SentimentScore",
     "PortfolioPerformance",
     "UserAction",
+    "CachedMarketData",
     "RiskLevel",
     "RebalancingStatus",
     "engine",
