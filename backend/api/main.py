@@ -5,9 +5,9 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import time
 
-from config import get_settings
-from database import init_db
-from api.routes import auth, portfolio, risk_profile, rebalancing, analytics, market_data, market_assets
+from backend.config import get_settings
+from backend.database import init_db
+from backend.api.routes import auth, portfolio, risk_profile, rebalancing, analytics, market_data, market_assets
 
 settings = get_settings()
 

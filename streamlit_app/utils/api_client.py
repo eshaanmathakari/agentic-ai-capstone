@@ -1,13 +1,17 @@
 """API client for communicating with the backend"""
 import requests
 import json
+import os
 from typing import Dict, Any, Optional
 import streamlit as st
 
 class APIClient:
     """Client for API communication"""
     
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = None):
+        # Use environment variable if available, otherwise default to backend service in Docker
+        if base_url is None:
+            base_url = os.getenv("BACKEND_URL", "http://backend:8000")
         self.base_url = base_url
         self.session = requests.Session()
         

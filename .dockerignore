@@ -28,7 +28,7 @@ coverage.xml
 venv/
 env/
 ENV/
-
+.env.backup
 # IDE
 .vscode/
 .idea/

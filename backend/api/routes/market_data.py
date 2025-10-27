@@ -1,15 +1,17 @@
 """Market data API routes"""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
+import logging
 
-from database import get_db, User
-from api.routes.auth import get_current_user
-# Simplified imports - using yfinance directly in tools
+from backend.database import get_db, User
+from backend.api.routes.auth import get_current_user
+from backend.agents.tools import fetch_market_data_tool, get_live_prices_tool
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # Pydantic models
@@ -39,17 +41,27 @@ async def get_latest_prices(
     db: Session = Depends(get_db)
 ):
     """Get latest prices for multiple symbols"""
-    collector = MarketDataCollector(db)
-    
-    prices = collector.get_multiple_latest_prices(symbols)
-    
-    if not prices:
-        raise HTTPException(status_code=404, detail="No prices found for the specified symbols")
-    
-    return {
-        "timestamp": datetime.utcnow().isoformat(),
-        "prices": prices
-    }
+    try:
+        # Use the tools module to fetch live prices
+        result = get_live_prices_tool(symbols)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=f"Failed to fetch prices: {result.get('error', 'Unknown error')}")
+        
+        live_prices = result.get("live_prices", {})
+        
+        if not live_prices:
+            raise HTTPException(status_code=404, detail="No prices found for the specified symbols")
+        
+        return {
+            "timestamp": result.get("timestamp", datetime.utcnow().isoformat()),
+            "prices": live_prices
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching latest prices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/asset/{symbol}")
@@ -59,11 +71,29 @@ async def get_asset_info(
     db: Session = Depends(get_db)
 ):
     """Get detailed asset information"""
-    collector = MarketDataCollector(db)
-    
-    info = collector.get_asset_info(symbol)
-    
-    return info
+    try:
+        # Fetch market data to get asset info
+        result = fetch_market_data_tool([symbol], days=5, db_session=db)
+        
+        if not result.get("success") or symbol not in result.get("data", {}):
+            raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+        
+        asset_data = result["data"][symbol]
+        
+        # Return basic asset info
+        return {
+            "symbol": symbol,
+            "name": symbol,  # Could be enhanced with company name lookup
+            "current_price": asset_data.get("current_price", 0),
+            "volume": asset_data.get("volume", 0),
+            "data_source": asset_data.get("data_source", "unknown"),
+            "data_points": asset_data.get("data_points", 0)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching asset info for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/historical/{symbol}")
@@ -74,45 +104,32 @@ async def get_historical_data(
     db: Session = Depends(get_db)
 ):
     """Get historical data for a symbol"""
-    collector = MarketDataCollector(db)
-    feature_engineer = FeatureEngineer()
-    
-    # Get data from database
-    df = collector.get_historical_data(symbol, days=days)
-    
-    if df.empty:
-        # If no data in database, fetch from Yahoo Finance
-        end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=days)
+    try:
+        # Fetch historical data using tools
+        result = fetch_market_data_tool([symbol], days=days, db_session=db)
         
-        data_dict = collector.fetch_yahoo_finance_data(
-            [symbol],
-            start_date=start_date,
-            end_date=end_date
-        )
-        
-        if symbol not in data_dict:
+        if not result.get("success") or symbol not in result.get("data", {}):
             raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
         
-        df = data_dict[symbol]
+        symbol_data = result["data"][symbol]
         
-        # Save to database
-        collector.save_market_data(symbol, df)
-    
-    # Calculate features
-    df_with_features = feature_engineer.calculate_all_features(df)
-    
-    # Convert to JSON-serializable format
-    df_reset = df_with_features.reset_index()
-    df_reset['date'] = df_reset['date'].dt.strftime('%Y-%m-%d')
-    
-    data = df_reset.to_dict(orient='records')
-    
-    return {
-        "symbol": symbol,
-        "records": len(data),
-        "data": data
-    }
+        if "error" in symbol_data:
+            raise HTTPException(status_code=404, detail=symbol_data["error"])
+        
+        historical_data = symbol_data.get("historical_data", [])
+        
+        return {
+            "symbol": symbol,
+            "records": len(historical_data),
+            "data": historical_data,
+            "current_price": symbol_data.get("current_price", 0),
+            "data_source": symbol_data.get("data_source", "unknown")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching historical data for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/update")
@@ -122,12 +139,21 @@ async def trigger_market_data_update(
     db: Session = Depends(get_db)
 ):
     """Manually trigger market data update"""
-    collector = MarketDataCollector(db)
-    
-    results = collector.update_all_symbols(symbols=symbols, period="5d")
-    
-    return {
-        "message": "Market data update completed",
-        "results": results
-    }
+    try:
+        # If no symbols provided, use default ones
+        if not symbols:
+            symbols = ["SPY", "QQQ", "IEF", "GLD", "BTC-USD"]
+        
+        # Fetch fresh data for all symbols
+        result = fetch_market_data_tool(symbols, days=30, db_session=db)
+        
+        return {
+            "message": "Market data update completed",
+            "results": result,
+            "successful_fetches": result.get("successful_fetches", 0),
+            "total_symbols": len(symbols)
+        }
+    except Exception as e:
+        logger.error(f"Error updating market data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 

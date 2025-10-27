@@ -7,8 +7,8 @@ import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from database import get_db
-from utils import setup_logger
+from backend.database import get_db
+from backend.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

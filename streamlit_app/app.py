@@ -811,9 +811,8 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
                     
                     if response.get("success"):
                         st.success("✅ Risk profile updated successfully!")
-                        # Force immediate refresh
-                        st.session_state.risk_profile = None
-                        fetch_risk_profile()
+                        # Update session state with the new data from response
+                        st.session_state.risk_profile = response.get('data')
                         time.sleep(0.5)  # Brief delay for DB commit
                         st.rerun()  # Reload page to show updated data
                     else:
@@ -1190,6 +1189,7 @@ def suggestions_tab(api_client: APIClient, portfolio_id: int):
             
             # Current vs Suggested allocation - get current from actual portfolio
             suggested_allocation = suggestion.get('suggested_allocation', {})
+            current_allocation_data = suggestion.get('current_allocation', {})
 
             # Get current allocation from actual portfolio holdings
             portfolio_response = api_client.get_portfolio(portfolio_id)
@@ -1208,9 +1208,18 @@ def suggestions_tab(api_client: APIClient, portfolio_id: int):
                         current_allocation[symbol] = value / total_value
                     else:
                         current_allocation[symbol] = 0
+            
+            # Use stored current allocation if we couldn't get it from portfolio
+            if not current_allocation and current_allocation_data:
+                current_allocation = current_allocation_data
+
+            # Debug: Show what data we have
+            if st.checkbox("🔍 Show Debug Info", key=f"debug_{i}"):
+                st.write("**Suggested Allocation Data:**", suggested_allocation)
+                st.write("**Current Allocation Data:**", current_allocation)
 
             if current_allocation and suggested_allocation:
-                st.subheader("Allocation Comparison")
+                st.subheader("📊 Allocation Comparison")
                 
                 # Create comparison DataFrame
                 comparison_data = []
@@ -1249,6 +1258,12 @@ def suggestions_tab(api_client: APIClient, portfolio_id: int):
                 
                 df = pd.DataFrame(comparison_data)
                 st.dataframe(df, use_container_width=True)
+            else:
+                st.warning("⚠️ No allocation data available. The AI analysis may not have generated target weights yet.")
+                if not suggested_allocation:
+                    st.info("💡 Suggested allocation is empty. Try regenerating the analysis.")
+                if not current_allocation:
+                    st.info("💡 Current allocation couldn't be calculated. Ensure your portfolio has holdings.")
             
             # AI Reasoning - User Friendly Display
             reasoning = suggestion.get('reasoning', {})
@@ -1259,8 +1274,8 @@ def suggestions_tab(api_client: APIClient, portfolio_id: int):
                 formatted_reasoning = format_ai_reasoning(reasoning)
                 st.markdown(formatted_reasoning)
 
-                # Technical Details (collapsible)
-                with st.expander("🔧 Technical Details"):
+                # Technical Details (toggle button instead of nested expander)
+                if st.checkbox("🔧 Show Technical Details", key=f"tech_details_{i}"):
                     st.json(reasoning)
             
             # Action buttons

@@ -35,6 +35,9 @@ venv.bak/
 .env.test.local
 .env.production.local
 
+# AWS Documentation (keep local)
+aws-docs/
+
 # Database
 *.db
 *.sqlite
@@ -84,3 +87,4 @@ docs/_build/
 *.temp
 temp/
 tmp/
+.env.backup

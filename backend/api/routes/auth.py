@@ -8,8 +8,8 @@ from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
-from database import get_db, User
-from config import get_settings
+from backend.database import get_db, User
+from backend.config import get_settings
 
 router = APIRouter()
 settings = get_settings()

@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     POLYGON_API_KEY: Optional[str] = None
     
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000", "http://localhost:8501"]
+    CORS_ORIGINS: list[str] = ["*"]  # Allow all origins for AWS deployment
     
     # Market Data Settings
     MARKET_DATA_UPDATE_FREQUENCY: str = "daily"  # daily or weekly

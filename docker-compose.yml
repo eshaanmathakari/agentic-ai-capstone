@@ -8,8 +8,10 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/portfolio_agent
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=dev-secret-key-change-in-production
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - DEBUG=${DEBUG:-False}
     depends_on:
       - db
       - redis
@@ -17,6 +19,7 @@ services:
       - ./backend:/app/backend
       - ./streamlit_app:/app/streamlit_app
     command: ["python", "-m", "uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    restart: unless-stopped
 
   streamlit:
     build: .
@@ -25,8 +28,11 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/portfolio_agent
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=dev-secret-key-change-in-production
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - DEBUG=${DEBUG:-False}
+      - BACKEND_URL=http://backend:8000
     depends_on:
       - db
       - redis
@@ -34,6 +40,7 @@ services:
     volumes:
       - ./streamlit_app:/app/streamlit_app
     command: ["streamlit", "run", "streamlit_app/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    restart: unless-stopped
 
   db:
     image: postgres:15
