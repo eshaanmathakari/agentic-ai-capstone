@@ -754,7 +754,16 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
     with col2:
         st.metric("Investment Horizon", f"{risk_profile.get('investment_horizon', 0)} years")
     
+    # Initialize show_update_form in session state
+    if 'show_update_form' not in st.session_state:
+        st.session_state.show_update_form = False
+    
+    # Toggle button
     if st.button("🔄 Update Risk Profile"):
+        st.session_state.show_update_form = not st.session_state.show_update_form
+    
+    # Show form if toggled on
+    if st.session_state.show_update_form:
         with st.expander("Update Risk Assessment Questionnaire", expanded=True):
             st.write("Update your risk profile information.")
             
@@ -795,7 +804,17 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
                     help="How many years can you invest before needing the money?"
                 )
 
-                if st.form_submit_button("Update Risk Profile"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    update_submitted = st.form_submit_button("✅ Update Risk Profile", use_container_width=True)
+                with col2:
+                    cancel_clicked = st.form_submit_button("❌ Cancel", use_container_width=True)
+                
+                if cancel_clicked:
+                    st.session_state.show_update_form = False
+                    st.rerun()
+                
+                if update_submitted:
                     profile_data = {
                         "age": risk_profile.get('age', 30),
                         "investment_horizon": investment_horizon,
@@ -813,6 +832,7 @@ def ai_analysis_tab(api_client: APIClient, portfolio_id: int):
                         st.success("✅ Risk profile updated successfully!")
                         # Update session state with the new data from response
                         st.session_state.risk_profile = response.get('data')
+                        st.session_state.show_update_form = False  # Close the form
                         time.sleep(0.5)  # Brief delay for DB commit
                         st.rerun()  # Reload page to show updated data
                     else:

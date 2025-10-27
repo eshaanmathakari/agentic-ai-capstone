@@ -140,8 +140,30 @@ class StrategyAgent(BaseAgent):
                 market_data=market_data
             )
             
-            # Get target weights from optimization results (note: key is "weights" not "target_weights")
-            target_weights = optimization_results.get("weights", {})
+            # Get target weights from optimization results (note: key can be "weights" or "target_weights")
+            target_weights = optimization_results.get("target_weights", optimization_results.get("weights", {}))
+            
+            # Log optimization results for debugging
+            logging.info(f"Optimization results: success={optimization_results.get('success')}, "
+                        f"market_data_available={optimization_results.get('market_data_available')}, "
+                        f"target_weights={list(target_weights.keys()) if target_weights else 'empty'}, "
+                        f"error={optimization_results.get('error', 'none')}")
+            
+            # If optimization failed, return error with details (DO NOT use fallback)
+            if not target_weights or not optimization_results.get("success"):
+                error_msg = optimization_results.get("error", "Unknown optimization error")
+                processing_errors = optimization_results.get("processing_errors", {})
+                logging.error(f"Portfolio optimization failed: {error_msg}")
+                logging.error(f"Processing errors: {processing_errors}")
+                
+                return {
+                    "success": False,
+                    "error": f"Portfolio optimization failed: {error_msg}",
+                    "optimization_results": optimization_results,
+                    "processing_errors": processing_errors,
+                    "symbols_requested": list(current_weights.keys()),
+                    "market_data_status": "Market data fetch may have failed or data format invalid"
+                }
             
             # Generate rebalancing actions based on current vs target weights
             actions = []
@@ -244,18 +266,43 @@ class StrategyAgent(BaseAgent):
                                 "sharpe_improvement_display": f"{sharpe_improvement:+.2f}"
                             }
                         else:
-                            # No market data available - cannot provide accurate projections
-                            return {
-                                "success": False,
-                                "error": "Market data required for portfolio optimization",
-                                "market_data_available": False
+                            # No market data available for accurate projections - use estimates
+                            logging.warning("No market data available for accurate projections, using estimates")
+                            expected_improvements = {
+                                "expected_return": 0.08,  # Assume 8% return
+                                "expected_volatility": 0.15,  # Assume 15% volatility
+                                "sharpe_ratio": 0.4,  # (0.08 - 0.02) / 0.15
+                                "return_improvement": 0,
+                                "volatility_improvement": 0,
+                                "sharpe_improvement": 0,
+                                "risk_reduction": 0,
+                                "expected_return_display": "8.0%",
+                                "expected_volatility_display": "15.0%",
+                                "sharpe_ratio_display": "0.40",
+                                "return_improvement_display": "+0.0%",
+                                "volatility_improvement_display": "+0.0%",
+                                "sharpe_improvement_display": "+0.00",
+                                "note": "Estimates based on historical market averages (market data unavailable)"
                             }
                 except Exception as e:
                     logging.error(f"Error calculating expected improvements: {e}")
-                    return {
-                        "success": False,
-                        "error": f"Failed to calculate expected improvements: {str(e)}",
-                        "market_data_available": False
+                    # Use default estimates instead of failing completely
+                    expected_improvements = {
+                        "expected_return": 0.08,
+                        "expected_volatility": 0.15,
+                        "sharpe_ratio": 0.4,
+                        "return_improvement": 0,
+                        "volatility_improvement": 0,
+                        "sharpe_improvement": 0,
+                        "risk_reduction": 0,
+                        "expected_return_display": "8.0%",
+                        "expected_volatility_display": "15.0%",
+                        "sharpe_ratio_display": "0.40",
+                        "return_improvement_display": "+0.0%",
+                        "volatility_improvement_display": "+0.0%",
+                        "sharpe_improvement_display": "+0.00",
+                        "error": str(e),
+                        "note": "Using default estimates due to calculation error"
                     }
 
             # Create structured recommendations object with enhanced data

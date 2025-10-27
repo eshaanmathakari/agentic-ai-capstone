@@ -578,8 +578,13 @@ def portfolio_optimizer_tool(current_weights: Dict[str, float], risk_level: str 
         if n_assets == 0:
             return {"success": False, "error": "No assets to optimize"}
         
-        # Require market data for optimization - no fallbacks
+        # Log market data status for debugging
+        logging.info(f"Portfolio optimization called for {n_assets} assets: {symbols}")
+        logging.info(f"Market data provided: {bool(market_data)}, symbols in data: {list(market_data.keys()) if market_data else 'None'}")
+        
+        # Require market data for optimization
         if not market_data:
+            logging.error("No market data provided to optimizer")
             return {
                 "success": False, 
                 "error": "Market data required for dynamic optimization",
@@ -589,25 +594,81 @@ def portfolio_optimizer_tool(current_weights: Dict[str, float], risk_level: str 
         # Calculate returns and covariance matrix from market data
         returns_data = {}
         valid_symbols = []
+        processing_errors = {}
 
         for symbol in symbols:
-            if symbol in market_data and 'historical_data' in market_data[symbol] and 'error' not in market_data[symbol]:
-                try:
-                    hist_data = market_data[symbol]['historical_data']
-                    if isinstance(hist_data, list) and hist_data:
-                        df = pd.DataFrame(hist_data)
-                        if 'Close' in df.columns and len(df) >= 10:  # Require at least 10 data points
-                            returns_data[symbol] = df['Close'].pct_change().dropna()
-                            valid_symbols.append(symbol)
-                except Exception as e:
-                    logging.warning(f"Could not process data for {symbol}: {e}")
+            try:
+                if symbol not in market_data:
+                    processing_errors[symbol] = "Symbol not in market_data"
+                    logging.warning(f"Symbol {symbol} not found in market_data")
+                    continue
+                
+                symbol_data = market_data[symbol]
+                
+                if 'error' in symbol_data:
+                    processing_errors[symbol] = symbol_data['error']
+                    logging.warning(f"Error in market data for {symbol}: {symbol_data['error']}")
+                    continue
+                
+                if 'historical_data' not in symbol_data:
+                    processing_errors[symbol] = "No historical_data field"
+                    logging.warning(f"No historical_data for {symbol}")
+                    continue
+                
+                hist_data = symbol_data['historical_data']
+                
+                if not isinstance(hist_data, list) or not hist_data:
+                    processing_errors[symbol] = f"Invalid historical_data format: {type(hist_data)}"
+                    logging.warning(f"Invalid historical_data for {symbol}: {type(hist_data)}")
+                    continue
+                
+                df = pd.DataFrame(hist_data)
+                logging.info(f"DataFrame for {symbol}: {len(df)} rows, columns: {list(df.columns)}")
+                
+                if 'Close' not in df.columns:
+                    processing_errors[symbol] = f"No 'Close' column. Available: {list(df.columns)}"
+                    logging.warning(f"No 'Close' column for {symbol}. Available: {list(df.columns)}")
+                    continue
+                
+                if len(df) < 10:
+                    processing_errors[symbol] = f"Insufficient data points: {len(df)}"
+                    logging.warning(f"Insufficient data for {symbol}: {len(df)} points (need 10+)")
+                    continue
+                
+                returns = df['Close'].pct_change().dropna()
+                returns_data[symbol] = returns
+                valid_symbols.append(symbol)
+                logging.info(f"Successfully processed {symbol}: {len(returns)} returns calculated")
+                
+            except Exception as e:
+                processing_errors[symbol] = str(e)
+                logging.error(f"Error processing {symbol}: {e}", exc_info=True)
 
-        # Require sufficient data for meaningful optimization
-        if len(returns_data) < 2 or len(valid_symbols) < 2:
+        logging.info(f"Optimization data collection: {len(valid_symbols)}/{len(symbols)} symbols valid")
+        
+        # Allow single-asset optimization with warning
+        if len(returns_data) == 0:
+            logging.error(f"No valid market data for any symbols. Errors: {processing_errors}")
             return {
                 "success": False,
-                "error": f"Insufficient market data for optimization: {len(returns_data)}/{len(symbols)} symbols have data",
-                "market_data_available": False
+                "error": f"No valid market data for optimization",
+                "market_data_available": False,
+                "symbols_requested": symbols,
+                "processing_errors": processing_errors
+            }
+        
+        if len(returns_data) == 1:
+            logging.warning(f"Only 1 symbol has valid data. Single-asset portfolio, no diversification possible.")
+            # For single asset, just return 100% allocation
+            single_symbol = valid_symbols[0]
+            return {
+                "success": True,
+                "target_weights": {single_symbol: 1.0},
+                "weights": {single_symbol: 1.0},
+                "market_data_available": True,
+                "risk_level": risk_level,
+                "optimization_method": "Single_Asset",
+                "note": "Single asset portfolio - no diversification optimization possible"
             }
         
         # Align returns data
